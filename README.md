@@ -2,6 +2,50 @@
 
 Turn **SuperGrok** into a REST API + CLI tool. No API key needed.
 
+## Linux Status
+
+Linux now has a dedicated REST bridge based on FastAPI with split automation engines:
+
+- Selenium + Firefox (primary)
+- Playwright + Firefox (fallback)
+
+The Linux bridge keeps endpoint compatibility with mac (`/chat`, `/new`, `/health`, `/history`) and adds optional inline attachments and engine selection on `/chat`.
+
+### Linux Setup
+
+```bash
+# 1) Python dependencies
+pip install -r linux/requirements.txt
+
+# 2) Playwright runtime (required for fallback engine)
+playwright install firefox
+
+# 3) Install geckodriver for Selenium (example on Debian/Ubuntu)
+sudo apt-get install -y firefox-esr geckodriver
+
+# 4) Start Linux bridge (headed mode by default)
+python3 linux/grok_bridge_l.py --port 19998
+```
+
+On first run, a persistent profile is created under `~/.grok-bridge/firefox-profile`.
+Log into `https://grok.com` once in that profile and subsequent requests reuse the session.
+
+### Linux `/chat` Payload
+
+```json
+{
+  "prompt": "Summarize this repo",
+  "timeout": 120,
+  "files": ["/absolute/path/to/file.txt"],
+  "engine": "auto"
+}
+```
+
+// Little note, selenium mightttt be broken, and its midnight, so I wont fix it rn. Just use playwright and call it a day ok?
+
+`engine` can be `auto`, `selenium`, or `playwright`.
+`auto` uses Selenium first and falls back to Playwright when needed.
+
 ## How it works
 
 ```

@@ -1,5 +1,5 @@
 #!/bin/bash
-# grok_chat.sh v3 — Turn SuperGrok into a CLI tool
+# grok_chat.sh v4 — Turn SuperGrok into a CLI tool
 # Sends a prompt to grok.com via Safari automation, waits for response
 #
 # Usage: bash grok_chat.sh "your question" [--timeout 60] [--screenshot]
@@ -19,6 +19,7 @@
 # v1: Peekaboo UI automation — slow, fragile
 # v2: Safari JS + System Events — faster, but needs Accessibility permission
 # v3: Safari JS + CGEvent (Swift) — no Accessibility permission needed
+# v4: DOM-based response extraction, better noise filtering
 
 set -euo pipefail
 
@@ -46,7 +47,9 @@ run_cmd() {
 
 run_js() {
   local js="$1"
-  run_cmd "osascript -e 'tell application \"Safari\" to do JavaScript \"${js}\" in current tab of window 1'" 2>/dev/null
+  # Escape double quotes for osascript
+  local safe_js="${js//\"/\\\"}"
+  run_cmd "osascript -e 'tell application \"Safari\" to do JavaScript \"${safe_js}\" in current tab of window 1'" 2>/dev/null
 }
 
 # Ensure the CGEvent helper exists on the Mac
@@ -82,11 +85,35 @@ case "paste_enter":
     usleep(500000)  // 0.5s between paste and enter
     pressKey(36)
 default:
-    print("Unknown command: \(args[1])")
+    print("Unknown command: \\(args[1])")
     exit(1)
 }
 SWIFT
   run_cmd "swift -O /tmp/grok_keys.swift paste 2>/dev/null && echo 'helper ok'" >/dev/null 2>&1 || true
+}
+
+# JS to extract the last assistant message via DOM selectors
+extract_response_js() {
+  cat <<'EOF'
+(function() {
+  var selectors = [
+    '[data-message-author-role="assistant"]',
+    '[data-testid="assistant-message"]',
+    '.message-assistant',
+    '.assistant-message',
+    '[class*="assistant-message"]',
+    '[class*="AssistantMessage"]',
+    '[class*="response-text"]'
+  ];
+  for (var i = 0; i < selectors.length; i++) {
+    var els = document.querySelectorAll(selectors[i]);
+    if (els.length > 0) {
+      return els[els.length - 1].innerText;
+    }
+  }
+  return "";
+})()
+EOF
 }
 
 # --- Step 0: Prepare Swift helper ---
@@ -94,12 +121,12 @@ ensure_swift_helper
 
 # --- Step 1: New conversation ---
 echo "[grok] New conversation..." >&2
-run_cmd "osascript -e 'tell application \"Safari\" to set URL of current tab of window 1 to \"https://grok.com/\"'" 2>/dev/null
+run_cmd "osascript -e 'tell application \"Safari\" to set URL of current tab of window 1 to \"https://grok.com/\"'" 2>/dev/null || true
 sleep 5
 
 # --- Step 2: Activate Safari + focus textarea ---
 echo "[grok] Sending (${#PROMPT} chars)..." >&2
-run_cmd "osascript -e 'tell application \"Safari\" to activate'" 2>/dev/null
+run_cmd "osascript -e 'tell application \"Safari\" to activate'" 2>/dev/null || true
 sleep 1
 run_js "var ta=document.querySelector('textarea');if(ta){ta.focus();ta.click();}"
 sleep 0.5
@@ -108,7 +135,7 @@ sleep 0.5
 printf '%s' "$PROMPT" | run_cmd pbcopy
 sleep 0.3
 
-run_cmd "swift /tmp/grok_keys.swift paste_enter" 2>/dev/null
+run_cmd "swift /tmp/grok_keys.swift paste_enter" 2>/dev/null || true
 
 # --- Step 4: Poll for response ---
 echo "[grok] Waiting (max ${TIMEOUT}s)..." >&2
@@ -116,7 +143,7 @@ PREV=""
 STABLE=0
 HAS_REPLY=false
 INITIAL_LEN=0
-sleep 8
+sleep 6
 
 # Get baseline page length (before Grok replies)
 INITIAL_LEN=$(run_js "document.body.innerText.length" 2>/dev/null | tr -d '.' | grep -oE '[0-9]+' || echo "500")
@@ -152,18 +179,26 @@ done
 [[ $STABLE -lt 3 ]] && echo "[grok] Warning: timeout, response may be incomplete" >&2
 
 # --- Step 5: Extract reply ---
-FULL=$(run_js "document.body.innerText" 2>/dev/null || echo "")
+# Try DOM extraction first
+DOM_RESPONSE=$(run_js "$(extract_response_js)" 2>/dev/null || echo "")
 
-PROMPT_PREFIX=$(echo "$PROMPT" | head -c 40)
-echo "$FULL" | awk -v prefix="$PROMPT_PREFIX" '
-  BEGIN { found=0 }
-  !found && index($0, prefix) > 0 { found=1; next }
-  found { print }
-' | grep -vE "^(Think Harder|Auto|Upgrade to|Toggle|Share|Like|Dislike|Are you satisfied|Get notified|Expert|Fast|Enable|Quick Answer|Explain|Compare|Make it|Executing code|Submit|Attach|Model select|Start dictation|Enter voice mode|Private|Imagine)$" \
-  | grep -vE "^[0-9]+(\.[0-9]+)?s$" \
-  | grep -vE "^[0-9]+ sources$" \
-  | sed '/^$/d' \
-  | head -100
+if [[ -n "$DOM_RESPONSE" ]]; then
+  echo "$DOM_RESPONSE"
+else
+  # Fallback: text-based extraction from full body
+  FULL=$(run_js "document.body.innerText" 2>/dev/null || echo "")
+
+  PROMPT_PREFIX=$(echo "$PROMPT" | head -c 40)
+  echo "$FULL" | awk -v prefix="$PROMPT_PREFIX" '
+    BEGIN { found=0 }
+    !found && index($0, prefix) > 0 { found=1; next }
+    found { print }
+  ' | grep -vE "^(Think Harder|Auto|Upgrade to|Toggle|Share|Like|Dislike|Are you satisfied|Get notified|Expert|Fast|Enable|Quick Answer|Explain|Compare|Make it|Executing code|Submit|Attach|Model select|Start dictation|Enter voice mode|Private|Imagine|Sources|Search)$" \
+    | grep -vE "^[0-9]+(\.[0-9]+)?s$" \
+    | grep -vE "^[0-9]+ sources$" \
+    | sed '/^$/d' \
+    | head -100
+fi
 
 # --- Step 6: Optional screenshot ---
 if $SCREENSHOT; then

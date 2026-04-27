@@ -1,50 +1,56 @@
-# 🌉 grok-bridge v3.0
+# grok-bridge v3.0
 
-Turn **SuperGrok** into a REST API + CLI tool. No API key needed.
+Turn **SuperGrok** into a REST API. No API key needed.
 
-## Linux Status
-
-Linux now has a dedicated REST bridge based on FastAPI with split automation engines:
-
-- Selenium + Firefox (primary)
-- Playwright + Firefox (fallback)
-
-The Linux bridge keeps endpoint compatibility with mac (`/chat`, `/new`, `/health`, `/history`) and adds optional inline attachments and engine selection on `/chat`.
-
-### Linux Setup
+## Quick Start (Linux)
 
 ```bash
-# 1) Python dependencies
+# 1) Install dependencies
 pip install -r linux/requirements.txt
-
-# 2) Playwright runtime (required for fallback engine)
 playwright install firefox
 
-# 3) Install geckodriver for Selenium (example on Debian/Ubuntu)
-sudo apt-get install -y firefox-esr geckodriver
-
-# 4) Start Linux bridge (headed mode by default)
+# 2) Start the bridge (headed mode by default)
 python3 linux/grok_bridge_l.py --port 19998
 ```
 
 On first run, a persistent profile is created under `~/.grok-bridge/firefox-profile`.
 Log into `https://grok.com` once in that profile and subsequent requests reuse the session.
 
-### Linux `/chat` Payload
+### Linux Usage (curl)
 
-```json
-{
-  "prompt": "Summarize this repo",
-  "timeout": 120,
-  "files": ["/absolute/path/to/file.txt"],
-  "engine": "auto"
-}
+```bash
+# Send a prompt
+curl -X POST http://localhost:19998/chat \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "What is the mass of the sun?", "timeout": 60}'
+
+# Start a new conversation
+curl -X POST http://localhost:19998/new
+
+# Health check
+curl http://localhost:19998/health
+
+# Read current conversation
+curl http://localhost:19998/history
 ```
 
-// Little note, selenium mightttt be broken, and its midnight, so I wont fix it rn. Just use playwright and call it a day ok?
+### With file attachments
 
-`engine` can be `auto`, `selenium`, or `playwright`.
-`auto` uses Selenium first and falls back to Playwright when needed.
+```bash
+curl -X POST http://localhost:19998/chat \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "Summarize this file", "files": ["/path/to/file.txt"]}'
+```
+
+### Environment variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| GROK_HOST | 0.0.0.0 | Bind address |
+| GROK_PORT | 19998 | Bind port |
+| GROK_PROFILE_DIR | ~/.grok-bridge/firefox-profile | Firefox profile path |
+| GROK_HEADLESS | 0 | Run browser headless (1=yes) |
+| GROK_PAGE_TIMEOUT | 60 | Page load timeout (seconds) |
 
 ## How it works
 

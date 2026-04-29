@@ -1,1 +1,0 @@
-"""Tool definitions and server for Grok Bridge tool calling."""

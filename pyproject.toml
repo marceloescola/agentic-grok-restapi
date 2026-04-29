@@ -5,7 +5,34 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
+    "duckduckgo-search>=7.0.0",
     "fastapi>=0.116.0",
+    "httpx>=0.28.0",
     "playwright>=1.54.0",
     "uvicorn>=0.35.0",
 ]
+
+[tool.pixi.workspace]
+channels = [
+    "https://conda.modular.com/max-nightly",  # or "https://conda.modular.com/max" for stable
+    "conda-forge"
+]
+platforms = ["linux-64"]
+
+[tool.pixi.pypi-dependencies]
+multi-grok-bridge = { path = ".", editable = true }
+
+[tool.pixi.tasks]
+
+[tool.pixi.dependencies]
+mojo = ">=1.0.0b1.dev2026042817,<2"
+# you can add tasks here later
+
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]            # current dir
+include = ["*"]          # or narrow it down: ["multi_grok_bridge*"]
+exclude = ["mac", "linux", "plans", "windows", "tests", "__pycache__"]  # add whatever you don't want

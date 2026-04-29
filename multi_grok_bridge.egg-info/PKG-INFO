@@ -1,0 +1,170 @@
+Metadata-Version: 2.4
+Name: multi-grok-bridge
+Version: 0.1.0
+Summary: Add your description here
+Requires-Python: >=3.14
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Requires-Dist: duckduckgo-search>=7.0.0
+Requires-Dist: fastapi>=0.116.0
+Requires-Dist: httpx>=0.28.0
+Requires-Dist: playwright>=1.54.0
+Requires-Dist: uvicorn>=0.35.0
+Dynamic: license-file
+
+# grok-bridge v3.0
+
+Turn **SuperGrok** into a REST API. No API key needed.
+
+## Quick Start (Linux)
+
+```bash
+# 1) Install dependencies
+pip install -r linux/requirements.txt
+playwright install firefox
+
+# 2) Start the bridge (headed mode by default)
+python3 linux/grok_bridge_l.py --port 19998
+```
+
+On first run, a persistent profile is created under `~/.grok-bridge/firefox-profile`.
+Log into `https://grok.com` once in that profile and subsequent requests reuse the session.
+
+### Linux Usage (curl)
+
+```bash
+# Send a prompt
+curl -X POST http://localhost:19998/chat \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "What is the mass of the sun?", "timeout": 60}'
+
+# Start a new conversation
+curl -X POST http://localhost:19998/new
+
+# Health check
+curl http://localhost:19998/health
+
+# Read current conversation
+curl http://localhost:19998/history
+```
+
+### With file attachments
+
+```bash
+curl -X POST http://localhost:19998/chat \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "Summarize this file", "files": ["/path/to/file.txt"]}'
+```
+
+### Environment variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| GROK_HOST | 0.0.0.0 | Bind address |
+| GROK_PORT | 19998 | Bind port |
+| GROK_PROFILE_DIR | ~/.grok-bridge/firefox-profile | Firefox profile path |
+| GROK_HEADLESS | 0 | Run browser headless (1=yes) |
+| GROK_PAGE_TIMEOUT | 60 | Page load timeout (seconds) |
+
+## How it works
+
+```
+Your Terminal/Script → Safari JS injection → grok.com → Response extracted via DOM
+```
+
+Two modes:
+
+### REST API (recommended)
+```bash
+# Start the server on your Mac
+python3 scripts/grok_bridge.py --port 19998
+
+# Query from anywhere
+curl -X POST http://your-mac:19998/chat \
+  -H "Content-Type: application/json" \
+  -d '{"prompt":"What is the mass of the sun?","timeout":60}'
+
+# Health check
+curl http://your-mac:19998/health
+
+# Read current conversation
+curl http://your-mac:19998/history
+```
+
+### CLI (legacy)
+```bash
+# Local
+bash scripts/grok_chat.sh "Explain quantum tunneling"
+
+# Remote via SSH
+MAC_SSH="ssh user@your-mac" bash scripts/grok_chat.sh "Write a haiku" --timeout 90
+```
+
+## Requirements
+
+- macOS with Safari
+- Logged into [grok.com](https://grok.com) (free or SuperGrok)
+- Safari > Settings > Advanced > Show features for web developers ✓
+- Safari > Develop > Allow JavaScript from Apple Events ✓
+- **No Accessibility permission needed** (v3 uses JS injection, not System Events)
+
+## API Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/chat` | Send prompt, wait for response |
+| POST | `/new` | Start new conversation |
+| GET | `/health` | Health check (Safari URL, grok status) |
+| GET | `/history` | Read current page conversation |
+
+## Version History
+
+| | v1 | v2 | v3 |
+|---|---|---|---|
+| Input | Peekaboo UI | pbcopy + Cmd+V | JS `execCommand('insertText')` |
+| Submit | UI click | System Events Return | JS `button.click()` |
+| Permissions | Peekaboo + Accessibility | Accessibility | **None** (pure JS injection) |
+| Interface | CLI only | CLI only | **REST API** + CLI |
+| Dependencies | Peekaboo (brew) | None | None (stdlib only) |
+| Speed | ~30s | ~3s | ~3s |
+
+## Architecture
+
+```
+┌──────────────┐                     ┌───────────────────────┐
+│  HTTP Client │  POST /chat         │      macOS            │
+│  (anywhere)  │ ──────────────────→ │                       │
+└──────────────┘                     │  grok_bridge.py       │
+                                     │  ↓ osascript          │
+                                     │  Safari do JavaScript │
+                                     │  ↓ execCommand        │
+                                     │  grok.com textarea    │
+                                     │  ↓ button.click()     │
+                                     │  Grok responds        │
+                                     │  ↓ DOM poll           │
+                                     │  Response extracted   │
+                                     └───────────────────────┘
+```
+
+## Key Insight (v3)
+
+React controlled inputs ignore JavaScript `value` setter, synthetic `InputEvent`, and even `nativeInputValueSetter`.
+
+What **doesn't** work from SSH:
+- ❌ `osascript keystroke` — blocked by macOS Accessibility
+- ❌ CGEvent (Swift) — HID events don't reach web content
+- ❌ JS `InputEvent` / `nativeInputValueSetter` — React ignores synthetic events
+
+What **does** work:
+- ✅ `document.execCommand('insertText')` — triggers real input in the browser
+- ✅ JS `button.click()` on Send button — no System Events needed
+
+Zero permissions, zero dependencies, pure JavaScript injection via AppleScript.
+
+## Credits
+
+v3 architecture designed by Claude Opus 4.6 (via [Antigravity](https://antigravity.so)), System Events bypass by 小灵 🦞.
+
+## License
+
+MIT

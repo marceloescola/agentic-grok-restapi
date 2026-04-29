@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Linux browser automation engine for grok.com.
-Playwright + Firefox (async API for use with FastAPI/Uvicorn).
+Playwright + Chromium (async API for use with FastAPI/Uvicorn).
 """
 
 from __future__ import annotations
@@ -9,13 +9,14 @@ from __future__ import annotations
 import os
 import random
 import re
+import shutil
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
 GROK_URL = "https://grok.com/"
-ENGINE_VERSION = "v3-linux-playwright-async"
+ENGINE_VERSION = "v3-linux-playwright-chromium"
 
 INPUT_SELECTORS = [
     "textarea",
@@ -47,8 +48,53 @@ SEND_TEXT_PATTERN = re.compile(r"send|submit|发送", re.IGNORECASE)
 
 STEALTH_JS = """
 (() => {
+  // Kill webdriver flag at the blink layer
+  try { Object.defineProperty(navigator, 'webdriver', { get: () => undefined }); } catch (_) {}
+
+  // Fake plugin array (real Chrome has >= 5)
   try {
-    Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+    const len = navigator.plugins.length;
+    if (len < 5) {
+      const fakePlugins = [
+        { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer' },
+        { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai' },
+        { name: 'Native Client', filename: 'internal-nacl-plugin' },
+        { name: 'Widevine Content Decryption Module', filename: 'widevinecdm' },
+      ];
+      Object.defineProperty(navigator, 'plugins', {
+        get: () => {
+          const arr = [...Array.from(navigator.plugins), ...fakePlugins];
+          arr.item = (i) => arr[i];
+          arr.namedItem = (n) => arr.find(p => p.name === n) || null;
+          arr.refresh = () => {};
+          return arr;
+        },
+      });
+    }
+  } catch (_) {}
+
+  // Chrome runtime object
+  if (!window.chrome) {
+    try { window.chrome = { runtime: {} }; } catch (_) {}
+  }
+
+  // Languages
+  try {
+    if (!navigator.languages || navigator.languages.length === 0) {
+      Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
+    }
+  } catch (_) {}
+
+  // Patch permissions so automation checks pass
+  try {
+    const origQuery = Permissions.prototype.query;
+    Permissions.prototype.query = (opts) =>
+      origQuery.call(navigator.permissions, opts).then(r => {
+        if (['camera','microphone','notifications','geolocation'].includes(opts.name)) {
+          r.onchange = null;
+        }
+        return r;
+      });
   } catch (_) {}
 })();
 """
@@ -105,11 +151,17 @@ GET_RESPONSE_VIA_DOM_JS = """
     '[class*="assistant-message"]',
     '[class*="AssistantMessage"]',
     '[class*="response-text"]',
+    '[class*="message-content"]',
+    '[class*="grok-response"]',
+    '.grok-message',
+    '.prose',
+    'article[class*="message"]',
   ];
   for (const sel of selectors) {
     const els = document.querySelectorAll(sel);
     if (els.length > 0) {
-      return els[els.length - 1].innerText;
+      const t = els[els.length - 1].innerText;
+      if (t && t.trim().length > 0) return t;
     }
   }
   return null;
@@ -126,6 +178,10 @@ class EngineConfig:
     profile_root: str
     headless: bool = False
     page_timeout_seconds: int = 60
+    user_data_dir: Optional[str] = None
+    browser_binary: Optional[str] = None
+    profile_name: str = "Default"
+    project_url: Optional[str] = None
 
 
 class GrokPlaywrightEngine:
@@ -158,18 +214,44 @@ class GrokPlaywrightEngine:
             from playwright.async_api import async_playwright
         except Exception as exc:
             raise EngineRuntimeError(
-                "playwright imports failed. Install with: pip install playwright && playwright install firefox"
+                "playwright imports failed. Install with: pip install playwright && playwright install chromium"
             ) from exc
 
-        profile_dir = self._profile_dir()
+        launch_kwargs: Dict[str, Any] = {
+            "headless": self.cfg.headless,
+            "viewport": {"width": 1366, "height": 900},
+            "args": [
+                "--no-first-run",
+                f"--profile-directory={self.cfg.profile_name}",
+                "--disable-blink-features=AutomationControlled",
+                "--disable-infobars",
+                "--no-default-browser-check",
+            ],
+        }
+
+        if self.cfg.user_data_dir:
+            resolved = Path(self.cfg.user_data_dir).expanduser().resolve()
+            if not (resolved / "Local State").is_file() and not (resolved / "First Run").is_file():
+                raise EngineRuntimeError(
+                    f"chromium user data dir not found or invalid: {resolved}\n"
+                    f"  Set to the parent of 'Default/' (e.g. ~/.config/chromium)"
+                )
+            launch_kwargs["user_data_dir"] = str(resolved)
+        else:
+            launch_kwargs["user_data_dir"] = self._profile_dir()
+
+        if self.cfg.browser_binary:
+            resolved_bin = shutil.which(self.cfg.browser_binary)
+            if not resolved_bin:
+                raise EngineRuntimeError(
+                    f"browser binary not found: {self.cfg.browser_binary}"
+                )
+            launch_kwargs["executable_path"] = resolved_bin
 
         try:
             self._playwright = await async_playwright().start()
-            self.context = await self._playwright.firefox.launch_persistent_context(
-                user_data_dir=profile_dir,
-                headless=self.cfg.headless,
-                viewport={"width": 1366, "height": 900},
-                args=["--no-first-run"],
+            self.context = await self._playwright.chromium.launch_persistent_context(
+                **launch_kwargs,
             )
             self.page = self.context.pages[0] if self.context.pages else await self.context.new_page()
             self.page.set_default_timeout(self.cfg.page_timeout_seconds * 1000)
@@ -325,18 +407,27 @@ class GrokPlaywrightEngine:
             return None
 
     async def ensure_grok(self) -> str:
+        return await self._ensure_on_grok()
+
+    def _grok_url(self) -> str:
+        return self.cfg.project_url or GROK_URL
+
+    async def _ensure_on_grok(self, force_navigate: bool = False) -> str:
         await self.start()
         assert self.page is not None
-        try:
-            await self.page.goto(
-                GROK_URL,
-                wait_until="domcontentloaded",
-                timeout=self.cfg.page_timeout_seconds * 1000,
-            )
-        except Exception as exc:
-            raise EngineRuntimeError(f"failed to navigate to grok.com: {exc}") from exc
 
-        await self._sleep_jitter(0.5, 1.0)
+        target = self._grok_url()
+        if force_navigate or not self.page.url.startswith(target):
+            try:
+                await self.page.goto(
+                    target,
+                    wait_until="domcontentloaded",
+                    timeout=self.cfg.page_timeout_seconds * 1000,
+                )
+            except Exception as exc:
+                raise EngineRuntimeError(f"failed to navigate to grok.com: {exc}") from exc
+
+            await self._sleep_jitter(0.5, 1.0)
 
         selector = await self._find_input_selector(timeout_seconds=25)
         if not selector:
@@ -346,9 +437,10 @@ class GrokPlaywrightEngine:
     async def new_conversation(self) -> None:
         await self.start()
         assert self.page is not None
+        target = self._grok_url()
         try:
             await self.page.goto(
-                GROK_URL,
+                target,
                 wait_until="domcontentloaded",
                 timeout=self.cfg.page_timeout_seconds * 1000,
             )
@@ -421,6 +513,89 @@ class GrokPlaywrightEngine:
         return {
             "status": "timeout",
             "response": partial,
+            "elapsed": round(time.time() - start, 1),
+        }
+
+    async def send_and_wait(
+        self,
+        prompt: str,
+        timeout: int = 120,
+        files: Optional[Sequence[str]] = None,
+    ) -> Dict[str, Any]:
+        input_selector = await self._ensure_on_grok(force_navigate=False)
+        start = time.time()
+
+        if files:
+            await self._attach_files(files)
+
+        await self._type_and_send(prompt, input_selector)
+
+        last_dom: Optional[str] = None
+        dom_stable = 0
+        last_body = ""
+        body_stable = 0
+        entered_body_fallback = False
+
+        while time.time() - start < timeout:
+            await _async_sleep(0.3)
+            elapsed = time.time() - start
+
+            # Fast path: DOM extraction — requires stability to avoid partial reads
+            extracted = await self._get_response_via_dom()
+            if extracted:
+                if extracted == last_dom:
+                    dom_stable += 1
+                    if dom_stable >= 2:  # ~0.6s of identical text → generation done
+                        return {
+                            "status": "ok",
+                            "response": self._clean(extracted),
+                            "_raw": extracted,
+                            "elapsed": round(elapsed, 1),
+                        }
+                else:
+                    last_dom = extracted
+                    dom_stable = 0
+                continue
+
+            # DOM selectors didn't match — fall back to body-text polling
+            if elapsed < 3.0 and not entered_body_fallback:
+                continue
+
+            entered_body_fallback = True
+            body = await self._get_body()
+            if body == last_body:
+                body_stable += 1
+                if body_stable >= 2:  # ~0.6s stable on body text
+                    extracted = await self._get_response_via_dom()
+                    if extracted:
+                        return {
+                            "status": "ok",
+                            "response": self._clean(extracted),
+                            "_raw": extracted,
+                            "elapsed": round(elapsed, 1),
+                        }
+                    return {
+                        "status": "ok",
+                        "response": self._extract(body, prompt) or "",
+                        "_raw": body[:2000],
+                        "elapsed": round(elapsed, 1),
+                    }
+            else:
+                body_stable = 0
+            last_body = body
+
+        # Timeout — return whatever we have
+        partial = await self._get_response_via_dom()
+        if partial:
+            return {
+                "status": "timeout",
+                "response": self._clean(partial),
+                "_raw": partial,
+                "elapsed": round(time.time() - start, 1),
+            }
+        return {
+            "status": "error",
+            "error": "no response detected",
             "elapsed": round(time.time() - start, 1),
         }
 
@@ -526,6 +701,14 @@ class GrokPlaywrightEngine:
             if idx > 0:
                 text = text[:idx]
 
+        # Strip thinking/evaluating lines: "Evaluating expression • 2s"
+        text = re.sub(r"(?m)^.*?•\s*\d+(\.\d+)?[ms]?\n?", "", text)
+        # Strip naked timing: " • 2s" or "• 2s" in the middle of text
+        text = re.sub(r"\s*•\s*\d+(\.\d+)?[ms]?\n?", "\n", text)
+        # Generic "Thinking..." / "Evaluating..." headings
+        text = re.sub(r"(?m)^(Thinking|Evaluating|Calculating|Analyzing|Searching|Looking up).*\n?", "", text)
+        # Strip "Detecting..." jailbreak warnings
+        text = re.sub(r"(?m)^Detecting.*\n?", "", text)
         text = re.sub(r"\n[0-9]+(\.[0-9]+)?s\n", "\n", text)
         text = re.sub(r"\n(Share|Compare|Make it|Explain|Toggle|Like|Dislike).*", "", text)
         text = re.sub(r"\n{3,}", "\n\n", text)
@@ -571,9 +754,10 @@ async def _async_sleep(seconds: float) -> None:
 class GrokEngineManager:
     """Thin async wrapper around the single Playwright engine."""
 
-    def __init__(self, cfg: EngineConfig) -> None:
+    def __init__(self, cfg: EngineConfig, tool_server_url: str = "http://localhost:19997") -> None:
         self.cfg = cfg
         self._engine = GrokPlaywrightEngine(cfg)
+        self._tool_server_url = tool_server_url
 
     async def warmup(self) -> None:
         await self._engine.start()
@@ -624,3 +808,32 @@ class GrokEngineManager:
         result["available_engines"] = availability
         result["active_engine"] = self._engine.name
         return result
+
+    async def agent_chat(
+        self,
+        prompt: str,
+        timeout: int = 120,
+        tools: Optional[Sequence[str]] = None,
+        max_steps: int = 10,
+    ) -> Dict[str, Any]:
+        from agent import GrokAgent
+
+        if not (prompt or "").strip():
+            return {"status": "error", "error": "prompt is required"}
+
+        timeout = int(timeout or 120)
+        if timeout < 5:
+            timeout = 5
+
+        try:
+            agent = GrokAgent(self._engine, self._tool_server_url)
+            result = await agent.run(
+                user_prompt=prompt,
+                timeout=timeout,
+                tools=list(tools) if tools else None,
+                max_steps=max_steps,
+            )
+            result["engine"] = self._engine.name
+            return result
+        except Exception as exc:
+            return {"status": "error", "error": str(exc)}

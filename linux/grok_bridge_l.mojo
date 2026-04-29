@@ -27,6 +27,13 @@ class ChatRequest(BaseModel):
     files: List[str] = Field(default_factory=list)
 
 
+class AgentRequest(BaseModel):
+    prompt: str = Field(..., min_length=1)
+    timeout: int = Field(default=120, ge=5, le=900)
+    tools: List[str] = Field(default_factory=list)
+    max_steps: int = Field(default=10, ge=1, le=20)
+
+
 class NewRequest(BaseModel):
     pass
 
@@ -55,6 +62,23 @@ def create_app(manager: GrokEngineManager) -> FastAPI:
         )
         print(
             f"[{ts}] << [{result.get('status')}] "
+            f"{str(result.get('response', result.get('error', '')))[:80]}",
+            flush=True,
+        )
+        return result
+
+    @app.post("/agent")
+    async def agent(req: AgentRequest):
+        ts = time.strftime("%H:%M:%S")
+        print(f"[{ts}] AGT>> {req.prompt[:80]}", flush=True)
+        result = await manager.agent_chat(
+            prompt=req.prompt,
+            timeout=req.timeout,
+            tools=req.tools or None,
+            max_steps=req.max_steps,
+        )
+        print(
+            f"[{ts}] AGT<< [{result.get('status')}] "
             f"{str(result.get('response', result.get('error', '')))[:80]}",
             flush=True,
         )
@@ -96,19 +120,48 @@ def main() -> None:
         default=int(os.getenv("GROK_PAGE_TIMEOUT", "60")),
         help="Page/script timeout in seconds.",
     )
+    parser.add_argument(
+        "--tool-server-url",
+        default=os.getenv("TOOL_SERVER_URL", "http://localhost:19997"),
+        help="URL of the tool server for /agent endpoint.",
+    )
+    parser.add_argument(
+        "--user-data-dir",
+        default=os.getenv("GROK_USER_DATA_DIR", ""),
+        help="Path to existing Chromium user data dir (e.g. ~/.config/chromium).",
+    )
+    parser.add_argument(
+        "--browser-path",
+        default=os.getenv("GROK_BROWSER_PATH", ""),
+        help="Path or name of the Chromium binary (default: Playwright bundled).",
+    )
+    parser.add_argument(
+        "--profile-name",
+        default=os.getenv("GROK_PROFILE_NAME", "Default"),
+        help="Profile directory name within user data dir (default: Default).",
+    )
+    parser.add_argument(
+        "--project-url",
+        default=os.getenv("GROK_PROJECT_URL", ""),
+        help="Grok project URL for persistent instructions (e.g. https://grok.com/project/UUID).",
+    )
     args = parser.parse_args()
 
     cfg = EngineConfig(
         profile_root=args.profile_dir,
         headless=bool(args.headless),
         page_timeout_seconds=max(10, int(args.page_timeout)),
+        user_data_dir=args.user_data_dir.strip() or None,
+        browser_binary=args.browser_path.strip() or None,
+        profile_name=args.profile_name.strip() or "Default",
+        project_url=args.project_url.strip() or None,
     )
-    manager = GrokEngineManager(cfg=cfg)
+    manager = GrokEngineManager(cfg=cfg, tool_server_url=args.tool_server_url)
     app = create_app(manager)
 
     print(f"Grok Bridge Linux {ENGINE_VERSION} {args.host}:{args.port}", flush=True)
     print(
-        "Endpoints: POST /chat, POST /new, GET /health, GET /history",
+        "Endpoints: POST /chat, POST /agent, POST /new, GET /health, GET /history",
         flush=True,
     )
     print(

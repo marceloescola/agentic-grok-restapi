@@ -1,8 +1,10 @@
 from __future__ import annotations
 
-from typing import Any, List, Optional
+import json
+from typing import Any, AsyncGenerator, Dict, List, Optional
 
 import httpx
+from websockets.asyncio.client import connect
 
 
 class GrokClient:
@@ -65,3 +67,40 @@ class GrokClient:
 
     async def close(self) -> None:
         await self._http.aclose()
+
+
+class GrokWSClient:
+    def __init__(self, base_url: str = "http://localhost:19998") -> None:
+        rest_url: str = base_url.rstrip("/")
+        self._ws_url: str = rest_url.replace("http://", "ws://").replace(
+            "https://", "wss://"
+        ) + "/ws"
+
+    async def run_prompt(
+        self,
+        prompt: str,
+        mode: str = "chat",
+        files: Optional[List[str]] = None,
+        tools: Optional[List[str]] = None,
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        msg: Dict[str, Any] = {
+            "type": "prompt",
+            "content": prompt,
+            "mode": mode,
+        }
+        if files:
+            msg["files"] = files
+        if tools:
+            msg["tools"] = tools
+        try:
+            async with connect(self._ws_url) as ws:
+                await ws.send(json.dumps(msg))
+                async for raw in ws:
+                    data: str = raw if isinstance(raw, str) else raw.decode()
+                    event: Dict[str, Any] = json.loads(data)
+                    yield event
+                    t: str = event.get("type", "")
+                    if t in ("done", "error", "timeout", "status"):
+                        break
+        except Exception as exc:
+            yield {"type": "error", "content": str(exc)}

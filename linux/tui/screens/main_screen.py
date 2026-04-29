@@ -1,15 +1,23 @@
 from __future__ import annotations
 
+from typing import Dict, Any
+
 from textual.containers import Horizontal
 from textual.screen import Screen
 from textual.widgets import Button, Header, Footer, Input, RichLog, Static
 
+from tui.client import GrokWSClient
+
 
 class MainScreen(Screen):
+    def __init__(self) -> None:
+        super().__init__()
+        self._streaming: bool = False
+
     def compose(self):
         yield Header(show_clock=True)
         yield RichLog(id="chat-log", highlight=True, wrap=True, markup=True)
-        yield Input(id="prompt-input", placeholder="Type a message and press Enter...")
+        yield Static(id="streaming-area", markup=True)
         yield Horizontal(
             Input(
                 id="files-input",
@@ -17,6 +25,7 @@ class MainScreen(Screen):
             ),
             id="files-bar",
         )
+        yield Input(id="prompt-input", placeholder="Type a message and press Enter...")
         yield Horizontal(
             Button("Send", id="send-btn", variant="primary"),
             Button("New", id="new-btn"),
@@ -41,6 +50,14 @@ class MainScreen(Screen):
     def _update_status(self, text: str):
         self.query_one("#status-bar", Static).update(text)
 
+    def _update_streaming(self, content: str):
+        self.query_one("#streaming-area", Static).update(
+            f"[bold green]Grok:[/bold green] {content}"
+        )
+
+    def _clear_streaming(self):
+        self.query_one("#streaming-area", Static).update("")
+
     async def _check_health_quiet(self):
         try:
             info = await self.app.client.health()
@@ -49,8 +66,10 @@ class MainScreen(Screen):
             engine = info.get("active_engine", "?")
             on_grok = info.get("on_grok", False)
             grok_str = "on grok.com" if on_grok else "off-site"
+            use_ws = self.app.config.get("use_websocket", False)
+            ws_str = " [cyan]WS[/cyan]" if use_ws else ""
             self._update_status(
-                f"[green]Connected[/green] | {grok_str} | "
+                f"[green]Connected[/green]{ws_str} | {grok_str} | "
                 f"engine: {engine} | {url[:60]}"
             )
         except Exception:
@@ -80,6 +99,9 @@ class MainScreen(Screen):
             self.app.action_show_menu()
 
     async def _send_prompt(self, prompt: str):
+        if self._streaming:
+            return
+
         files_input = self.query_one("#files-input", Input)
         files = (
             [f.strip() for f in files_input.value.split(",") if f.strip()]
@@ -90,8 +112,17 @@ class MainScreen(Screen):
         self._log(f"\n[bold cyan]You:[/bold cyan] {prompt}")
         if files:
             self._log(f"[dim]Files: {', '.join(files)}[/dim]")
+
+        use_ws: bool = self.app.config.get("use_websocket", False)
+
+        if use_ws:
+            await self._send_ws(prompt, files)
+        else:
+            await self._send_rest(prompt, files)
+
+    async def _send_rest(self, prompt: str, files):
         self._update_status("[yellow]Sending...[/yellow]")
-        self.query_one("#send-btn", Button).disabled = True
+        self._set_sending(True)
         try:
             result = await self.app.client.chat(
                 prompt=prompt,
@@ -111,7 +142,54 @@ class MainScreen(Screen):
             self._log(f"\n[bold red]Connection error:[/bold red] {e}")
             self._update_status("[red]Connection failed[/red]")
         finally:
-            self.query_one("#send-btn", Button).disabled = False
+            self._set_sending(False)
+
+    async def _send_ws(self, prompt: str, files):
+        self._update_status("[yellow]Streaming...[/yellow]")
+        self._streaming = True
+        self._set_sending(True)
+        ws = GrokWSClient(self.app.config.get("server_url", "http://localhost:19998"))
+        try:
+            async for event in ws.run_prompt(
+                prompt=prompt, mode="chat", files=files or None
+            ):
+                t: str = event.get("type", "")
+                if t == "partial":
+                    self._update_streaming(event.get("content", ""))
+                elif t == "done":
+                    content: str = event.get("content", "")
+                    self._log(f"[bold green]Grok:[/bold green] {content}")
+                    self._clear_streaming()
+                    self._update_status("[green]Done[/green]")
+                elif t == "tool_call":
+                    self._log(
+                        f"[bold cyan]Calling tool: {event.get('tool')}"
+                        f"({event.get('arguments', {})})[/bold cyan]"
+                    )
+                elif t == "tool_result":
+                    self._log(
+                        f"[dim]Tool result ({len(event.get('result', ''))} chars)[/dim]"
+                    )
+                elif t == "error":
+                    self._log(f"[bold red]Error:[/bold red] {event.get('content')}")
+                    self._update_status("[red]Error[/red]")
+                elif t == "status":
+                    state: str = event.get("state", "")
+                    if state == "done":
+                        self._update_status("[green]Done[/green]")
+                    else:
+                        self._update_status(f"[yellow]{state}[/yellow]")
+        except Exception as e:
+            self._log(f"\n[bold red]WS error:[/bold red] {e}")
+            self._update_status("[red]WS failed[/red]")
+        finally:
+            self._streaming = False
+            self._clear_streaming()
+            self._set_sending(False)
+
+    def _set_sending(self, busy: bool):
+        self.query_one("#send-btn", Button).disabled = busy
+        self.query_one("#prompt-input", Input).disabled = busy
 
     async def _new_conversation(self):
         self._update_status("[yellow]Starting new conversation...[/yellow]")
@@ -140,12 +218,15 @@ class MainScreen(Screen):
             on_grok = info.get("on_grok", False)
             grok_str = "yes" if on_grok else "no"
             available = info.get("available_engines", {})
+            use_ws = self.app.config.get("use_websocket", False)
+            ws_str = "WS on" if use_ws else "WS off"
             msg = (
                 f"\n[bold]Health Check:[/bold]\n"
                 f"  Status: [green]{status}[/green]\n"
                 f"  Version: {version}\n"
                 f"  Engine: {engine}\n"
                 f"  On grok.com: {grok_str}\n"
+                f"  WebSocket: {ws_str}\n"
                 f"  URL: {url}\n"
                 f"  Available: {available}"
             )

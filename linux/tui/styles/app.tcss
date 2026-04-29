@@ -9,8 +9,12 @@ Screen {
     padding: 0 1;
 }
 
-#prompt-input {
-    margin: 1 1 0 1;
+#streaming-area {
+    height: auto;
+    max-height: 5;
+    margin: 0 1;
+    padding: 0 1;
+    color: $text-muted;
 }
 
 #files-bar {
@@ -20,6 +24,10 @@ Screen {
 
 #files-input {
     width: 100%;
+}
+
+#prompt-input {
+    margin: 0 1;
 }
 
 #button-bar {
@@ -79,12 +87,65 @@ Button {
     margin: 1 1;
 }
 
+/* Agent screen */
+#agent-config {
+    height: auto;
+    max-height: 14;
+    margin: 0 1;
+}
+
+#tool-bar {
+    height: auto;
+    margin: 0 1;
+    align: left middle;
+}
+
+#tool-bar > Button {
+    min-width: 14;
+}
+
+#file-section {
+    height: 3;
+    margin: 0 1;
+    display: none;
+}
+
+#file-section > #file-path {
+    width: 1fr;
+}
+
+#max-steps-bar {
+    height: auto;
+    margin: 0 1;
+}
+
+#max-steps-bar > #max-steps {
+    width: 8;
+}
+
 #agent-output {
     height: 1fr;
     border: solid $secondary;
-    margin: 1;
+    margin: 0 1;
 }
 
+#agent-input-bar {
+    height: 3;
+    margin: 0 1;
+}
+
+#agent-input-bar > #agent-prompt {
+    width: 1fr;
+}
+
+#agent-status {
+    height: 1;
+    background: $panel;
+    color: $text-muted;
+    padding: 0 1;
+}
+
+/* Settings */
 #settings-scroll {
     padding: 0 1;
 }
@@ -95,10 +156,23 @@ Button {
     align: center middle;
 }
 
-#agent-prompt {
-    margin: 0 1;
-}
-
 Checkbox {
     margin: 0 2;
+}
+
+/* File picker */
+#file-tree {
+    height: 1fr;
+    margin: 1;
+    border: solid $primary;
+}
+
+#fp-buttons {
+    height: 3;
+    margin: 0 1;
+    align: center middle;
+}
+
+#s-websocket {
+    margin: 0 1;
 }

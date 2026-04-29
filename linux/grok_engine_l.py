@@ -14,7 +14,7 @@ import shutil
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, AsyncGenerator, Dict, List, Optional, Sequence
 
 GROK_URL: str = "https://grok.com/"
 ENGINE_VERSION: str = "v3-linux-playwright-chromium"
@@ -600,6 +600,92 @@ class GrokPlaywrightEngine:
             "elapsed": round(time.time() - start, 1),
         }
 
+    async def watch_response(
+        self,
+        prompt: str,
+        timeout: int = 120,
+        files: Optional[Sequence[str]] = None,
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        input_selector: str = await self._ensure_on_grok(force_navigate=False)
+        if files:
+            await self._attach_files(files)
+
+        old_dom: Optional[str] = await self._get_response_via_dom()
+
+        await self._type_and_send(prompt, input_selector)
+
+        start: float = time.time()
+        last_dom: Optional[str] = old_dom
+        dom_stable: int = 0
+        has_new: bool = False
+        body_before: str = await self._get_body()
+        initial_len: int = len(body_before)
+        has_response: bool = False
+        last_body_text: Optional[str] = None
+        body_stable: int = 0
+        entered_body_fallback: bool = False
+
+        while time.time() - start < timeout:
+            await _async_sleep(0.3)
+            elapsed: float = time.time() - start
+
+            extracted: Optional[str] = await self._get_response_via_dom()
+
+            if extracted:
+                if has_new:
+                    if extracted != last_dom:
+                        yield {"type": "partial", "content": extracted}
+                        last_dom = extracted
+                        dom_stable = 0
+                    else:
+                        dom_stable += 1
+                        if dom_stable >= 2:
+                            yield {"type": "done", "content": extracted}
+                            return
+                elif extracted != old_dom:
+                    has_new = True
+                    has_response = True
+                    yield {"type": "partial", "content": extracted}
+                    last_dom = extracted
+                elif old_dom is None:
+                    has_new = True
+                    has_response = True
+                    yield {"type": "partial", "content": extracted}
+                    last_dom = extracted
+                continue
+
+            if elapsed < 3.0 and not entered_body_fallback:
+                continue
+            entered_body_fallback = True
+
+            body: str = await self._get_body()
+
+            if not has_response:
+                if len(body) <= initial_len + 50:
+                    continue
+                has_response = True
+                has_new = True
+
+            if body == last_body_text:
+                body_stable += 1
+                if body_stable >= 2:
+                    extracted = await self._get_response_via_dom()
+                    if extracted:
+                        yield {"type": "done", "content": extracted}
+                    else:
+                        content: str = self._extract(body, prompt) or ""
+                        yield {"type": "done", "content": content}
+                    return
+            else:
+                body_stable = 0
+            last_body_text = body
+
+        partial: Optional[str] = await self._get_response_via_dom()
+        if partial:
+            yield {"type": "timeout", "content": partial}
+        else:
+            yield {"type": "error", "content": "no response detected"}
+
     async def history(self) -> Dict[str, Any]:
         await self.start()
         body: str = await self._get_body()
@@ -838,3 +924,32 @@ class GrokEngineManager:
             return result
         except Exception as exc:
             return {"status": "error", "error": str(exc)}
+
+    async def stream_chat(
+        self,
+        prompt: str,
+        timeout: int = 120,
+        files: Optional[Sequence[str]] = None,
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        async for event in self._engine.watch_response(
+            prompt=prompt, timeout=timeout, files=files,
+        ):
+            yield event
+
+    async def stream_agent(
+        self,
+        prompt: str,
+        timeout: int = 120,
+        tools: Optional[Sequence[str]] = None,
+        max_steps: int = 10,
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        from agent import GrokAgent
+
+        agent: GrokAgent = GrokAgent(self._engine, self._tool_server_url)
+        async for event in agent.run_streaming(
+            user_prompt=prompt,
+            timeout=timeout,
+            tools=list(tools) if tools else None,
+            max_steps=max_steps,
+        ):
+            yield event

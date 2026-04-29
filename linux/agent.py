@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import os
 import sys
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, AsyncGenerator, Dict, List, Optional, Sequence
 
 # Allow importing the tools package from the project root (parent of linux/)
 _project_root: str = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -164,3 +164,99 @@ class GrokAgent:
         result["steps"] = steps
         result["status"] = "max_steps"
         return result
+
+    async def run_streaming(
+        self,
+        user_prompt: str,
+        timeout: int = 120,
+        tools: Optional[Sequence[str]] = None,
+        max_steps: int = 10,
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        tool_defs: List[Any] = get_tool_defs(list(tools) if tools else None)
+
+        if not tool_defs:
+            async for event in self._engine.watch_response(prompt=user_prompt, timeout=timeout):
+                yield event
+            return
+
+        steps: List[Dict[str, Any]] = []
+        response_text: str = ""
+
+        async for event in self._engine.watch_response(prompt=user_prompt, timeout=timeout):
+            if event["type"] in ("done", "timeout", "error"):
+                response_text = event.get("content", "")
+                break
+            yield event
+
+        for step in range(max_steps):
+            tool_call: Optional[Dict[str, Any]] = extract_first_tool_call(response_text)
+
+            if tool_call is None:
+                yield {"type": "message", "content": response_text}
+                yield {"type": "status", "state": "done", "steps": steps}
+                return
+
+            tool_name: str = tool_call.get("name", "")
+            args: Dict[str, Any] = tool_call.get("arguments", {})
+
+            if not tool_name:
+                err_msg: str = (
+                    "That format didn't parse. Use TOOL_CALL with a name field, "
+                    f'like: TOOL_CALL {{"name":"calculator","arguments":{{"expression":"..."}}}}'
+                )
+                async for event in self._engine.watch_response(prompt=err_msg, timeout=timeout):
+                    if event["type"] in ("done", "timeout", "error"):
+                        response_text = event.get("content", "")
+                        break
+                continue
+
+            if tool_name not in ALL_TOOLS:
+                err_msg = (
+                    f"Unknown tool '{tool_name}'. "
+                    f"Available: {', '.join(ALL_TOOLS)}. Try again?"
+                )
+                async for event in self._engine.watch_response(prompt=err_msg, timeout=timeout):
+                    if event["type"] in ("done", "timeout", "error"):
+                        response_text = event.get("content", "")
+                        break
+                continue
+
+            print(
+                f"[agent] step {step + 1}: calling tool '{tool_name}' "
+                f"with args {json.dumps(args)}",
+                flush=True,
+            )
+            yield {"type": "tool_call", "tool": tool_name, "arguments": args}
+
+            tool_result: str = await self._call_tool(tool_name, args)
+            print(
+                f"[agent] step {step + 1}: tool result ({len(tool_result)} chars)",
+                flush=True,
+            )
+
+            yield {"type": "tool_result", "tool": tool_name, "result": tool_result}
+
+            steps.append({
+                "step": step + 1,
+                "tool": tool_name,
+                "args": args,
+                "result": tool_result,
+            })
+
+            async for event in self._engine.watch_response(
+                prompt=build_tool_result_message(tool_name, tool_result),
+                timeout=timeout,
+            ):
+                if event["type"] in ("done", "timeout", "error"):
+                    response_text = event.get("content", "")
+                    break
+                yield event
+
+        yield {"type": "message", "content": response_text}
+        yield {"type": "status", "state": "max_steps", "steps": steps}
+
+
+if __name__ == "__main__":
+    print("agent.py is a module, not a standalone script.")
+    print("Start the bridge: uv run linux/grok_bridge_l.py")
+    print("Then POST /agent or use the TUI Agent screen.")

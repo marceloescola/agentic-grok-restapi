@@ -13,4 +13,5 @@ dependencies = [
     "playwright>=1.54.0",
     "textual>=0.52.0",
     "uvicorn>=0.35.0",
+    "websockets>=16.0",
 ]

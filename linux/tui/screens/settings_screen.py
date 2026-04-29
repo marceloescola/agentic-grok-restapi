@@ -5,7 +5,7 @@ import asyncio
 from textual.app import ComposeResult
 from textual.containers import Horizontal, ScrollableContainer
 from textual.screen import Screen
-from textual.widgets import Button, Header, Footer, Input, Label, Static
+from textual.widgets import Button, Header, Footer, Input, Label, Static, Switch
 
 
 class SettingsScreen(Screen):
@@ -22,6 +22,13 @@ class SettingsScreen(Screen):
             Input(id="s-agent-timeout", classes="input"),
             Label("Agent Max Steps:", classes="label"),
             Input(id="s-max-steps", classes="input"),
+            Label("WebSocket", classes="section-title"),
+            Label("Use WebSocket for real-time streaming (connect per prompt):", classes="label"),
+            Horizontal(
+                Label("WebSocket Mode:", classes="label"),
+                Switch(id="s-websocket"),
+                classes="horizontal",
+            ),
             Horizontal(
                 Button("Save", id="save-btn", variant="primary"),
                 Button("Reset", id="reset-btn"),
@@ -41,6 +48,9 @@ class SettingsScreen(Screen):
             cfg.get("agent_timeout", 120)
         )
         self.query_one("#s-max-steps", Input).value = str(cfg.get("max_steps", 10))
+        self.query_one("#s-websocket", Switch).value = bool(
+            cfg.get("use_websocket", False)
+        )
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "back-btn":
@@ -74,6 +84,10 @@ class SettingsScreen(Screen):
         except ValueError:
             pass
 
+        cfg["use_websocket"] = bool(
+            self.query_one("#s-websocket", Switch).value
+        )
+
         from tui.config import save_config
 
         save_config(cfg)
@@ -95,6 +109,7 @@ class SettingsScreen(Screen):
         self.app.config["timeout"] = DEFAULT_CONFIG["timeout"]
         self.app.config["agent_timeout"] = DEFAULT_CONFIG["agent_timeout"]
         self.app.config["max_steps"] = DEFAULT_CONFIG["max_steps"]
+        self.app.config["use_websocket"] = DEFAULT_CONFIG["use_websocket"]
         self.on_mount()
         self.query_one("#settings-status", Static).update(
             "[yellow]Defaults restored (click Save to persist)[/yellow]"

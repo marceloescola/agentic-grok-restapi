@@ -10,6 +10,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "agent_timeout": 120,
     "max_steps": 10,
     "tools": ["calculator", "web_search", "file_read"],
+    "use_websocket": False,
 }
 
 CONFIG_DIR = os.path.expanduser("~/.grok-bridge")

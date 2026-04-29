@@ -1,6 +1,0 @@
-{
-  "typeCheckingMode": "strict",
-  "include": ["tools", "linux"],
-  "exclude": [],
-  "reportMissingTypeStubs": "warning"
-}

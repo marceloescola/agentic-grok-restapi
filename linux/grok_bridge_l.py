@@ -4,6 +4,10 @@ grok_bridge_l.py v3 - Linux REST bridge for grok.com.
 
 This entrypoint exposes a FastAPI service while browser automation lives in
 the dedicated linux engine module.
+
+As you can see, it is a bit of a weird style of code. I did a lot of typing, even though we are on python
+
+But once you get used it, you'll love it!
 """
 
 from __future__ import annotations
@@ -21,6 +25,8 @@ import uvicorn
 from grok_engine_l import ENGINE_VERSION, EngineConfig, GrokEngineManager
 
 
+# Classes that will hold the model of chat request and agent request. Very good build the
+# Endpoint later
 class ChatRequest(BaseModel):
     prompt: str = Field(..., min_length=1)
     timeout: int = Field(default=120, ge=5, le=900)

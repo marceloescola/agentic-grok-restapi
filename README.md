@@ -1,25 +1,21 @@
-# grok-bridge v3.0
+# multi-grok-bridge
 
-Turn **SuperGrok** into a REST API. No API key needed.
+Turn **SuperGrok** into a REST API + WebSocket service + TUI. No API key needed.
+Uses Playwright + Chromium to automate grok.com in the browser.
 
-## Quick Start (Linux)
+> Originally inspired by [grok-bridge v3.0](https://github.com/anthropics/grok-bridge) — this is a complete from-scratch rewrite with a different architecture (Python/FastAPI, Playwright Chromium, Linux, tool-calling agent, WebSocket streaming, TUI).
 
-```bash
-# 1) Install dependencies
-pip install -r linux/requirements.txt
-playwright install firefox
-
-# 2) Start the bridge (headed mode by default)
-python3 linux/grok_bridge_l.py --port 19998
-```
-
-On first run, a persistent profile is created under `~/.grok-bridge/firefox-profile`.
-Log into `https://grok.com` once in that profile and subsequent requests reuse the session.
-
-### Linux Usage (curl)
+## Quick Start
 
 ```bash
-# Send a prompt
+# Install dependencies
+uv sync
+playwright install chromium
+
+# Start the bridge (headed mode by default)
+uv run linux/grok_bridge_l.py --port 19998
+
+# In another terminal — send a message
 curl -X POST http://localhost:19998/chat \
   -H "Content-Type: application/json" \
   -d '{"prompt": "What is the mass of the sun?", "timeout": 60}'
@@ -34,7 +30,9 @@ curl http://localhost:19998/health
 curl http://localhost:19998/history
 ```
 
-### With file attachments
+On first run, a persistent Chromium profile is created. Log into grok.com once, subsequent requests reuse the session.
+
+### File attachments
 
 ```bash
 curl -X POST http://localhost:19998/chat \
@@ -42,114 +40,108 @@ curl -X POST http://localhost:19998/chat \
   -d '{"prompt": "Summarize this file", "files": ["/path/to/file.txt"]}'
 ```
 
-### Environment variables
+## Agent Mode (Tool Calling)
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| GROK_HOST | 0.0.0.0 | Bind address |
-| GROK_PORT | 19998 | Bind port |
-| GROK_PROFILE_DIR | ~/.grok-bridge/firefox-profile | Firefox profile path |
-| GROK_HEADLESS | 0 | Run browser headless (1=yes) |
-| GROK_PAGE_TIMEOUT | 60 | Page load timeout (seconds) |
+Grok can call tools during a conversation. Tools are executed by a separate tool server:
 
-## How it works
-
-```
-Your Terminal/Script → Safari JS injection → grok.com → Response extracted via DOM
-```
-
-Two modes:
-
-### REST API (recommended)
 ```bash
-# Start the server on your Mac
-python3 scripts/grok_bridge.py --port 19998
+# Terminal 1: start the tool server
+uv run python tools/tool_server.py --port 19997
 
-# Query from anywhere
-curl -X POST http://your-mac:19998/chat \
+# Terminal 2: start the bridge
+uv run linux/grok_bridge_l.py --port 19998 --tool-server-url http://localhost:19997
+
+# Send an agent prompt — Grok can invoke calculator, web_search, file_read
+curl -X POST http://localhost:19998/agent \
   -H "Content-Type: application/json" \
-  -d '{"prompt":"What is the mass of the sun?","timeout":60}'
-
-# Health check
-curl http://your-mac:19998/health
-
-# Read current conversation
-curl http://your-mac:19998/history
+  -d '{"prompt": "Search the web for AI news and calculate 2+2", "tools": ["web_search", "calculator"]}'
 ```
 
-### CLI (legacy)
+Available tools: `calculator`, `web_search`, `file_read`.
+
+## WebSocket Streaming
+
+For real-time streaming of Grok responses (partial output, tool calls, intermediate results):
+
+```python
+import json
+from websockets.asyncio.client import connect
+
+async def stream():
+    async with connect("ws://localhost:19998/ws") as ws:
+        await ws.send(json.dumps({"type": "prompt", "content": "Explain quantum computing", "mode": "chat"}))
+        async for msg in ws:
+            event = json.loads(msg)
+            print(event["type"], event.get("content", ""))
+            if event["type"] in ("done", "error", "timeout", "status"):
+                break
+```
+
+Event types: `partial` (streaming text), `done` (final), `tool_call`, `tool_result`, `message`, `status`.
+
+## TUI (Textual Terminal UI)
+
+A full terminal user interface with chat, agent mode, settings, and file picker:
+
 ```bash
-# Local
-bash scripts/grok_chat.sh "Explain quantum tunneling"
-
-# Remote via SSH
-MAC_SSH="ssh user@your-mac" bash scripts/grok_chat.sh "Write a haiku" --timeout 90
+uv run -m tui
 ```
 
-## Requirements
+- **Main screen**: chat with Grok, file attachments, history
+- **Agent screen**: toggle tool buttons, file browser for `file_read`, streaming agent output
+- **Settings**: server URL, timeouts, WebSocket toggle
+- **Ctrl+Shift+Y** or **Menu button**: open menu
 
-- macOS with Safari
-- Logged into [grok.com](https://grok.com) (free or SuperGrok)
-- Safari > Settings > Advanced > Show features for web developers ✓
-- Safari > Develop > Allow JavaScript from Apple Events ✓
-- **No Accessibility permission needed** (v3 uses JS injection, not System Events)
+Toggle WebSocket mode in Settings for real-time response streaming in the chat.
 
-## API Endpoints
+## Endpoints
 
 | Method | Path | Description |
 |--------|------|-------------|
 | POST | `/chat` | Send prompt, wait for response |
+| POST | `/agent` | Agent loop with tool calling |
 | POST | `/new` | Start new conversation |
-| GET | `/health` | Health check (Safari URL, grok status) |
-| GET | `/history` | Read current page conversation |
-
-## Version History
-
-| | v1 | v2 | v3 |
-|---|---|---|---|
-| Input | Peekaboo UI | pbcopy + Cmd+V | JS `execCommand('insertText')` |
-| Submit | UI click | System Events Return | JS `button.click()` |
-| Permissions | Peekaboo + Accessibility | Accessibility | **None** (pure JS injection) |
-| Interface | CLI only | CLI only | **REST API** + CLI |
-| Dependencies | Peekaboo (brew) | None | None (stdlib only) |
-| Speed | ~30s | ~3s | ~3s |
+| GET | `/health` | Bridge health + Grok connection status |
+| GET | `/history` | Current page conversation text |
+| WS | `/ws` | WebSocket streaming (chat + agent) |
 
 ## Architecture
 
 ```
-┌──────────────┐                     ┌───────────────────────┐
-│  HTTP Client │  POST /chat         │      macOS            │
-│  (anywhere)  │ ──────────────────→ │                       │
-└──────────────┘                     │  grok_bridge.py       │
-                                     │  ↓ osascript          │
-                                     │  Safari do JavaScript │
-                                     │  ↓ execCommand        │
-                                     │  grok.com textarea    │
-                                     │  ↓ button.click()     │
-                                     │  Grok responds        │
-                                     │  ↓ DOM poll           │
-                                     │  Response extracted   │
-                                     └───────────────────────┘
+┌──────────────────┐     POST /chat        ┌─────────────────────────────┐
+│  HTTP Client     │     POST /agent       │  Bridge (FastAPI)           │
+│  (curl / code)   │ ─────────────────────→│                             │
+│                  │     WS /ws            │  grok_bridge_l.py           │
+│  WebSocket       │ ◄═══════════════════  │  grok_engine_l.py           │
+│  Client          │    streaming events   │  ↓ Playwright + Chromium    │
+└──────────────────┘                       │  ↓ grok.com                 │
+                                           │                             │
+┌──────────────────┐                       │  Agent loop:                │
+│  TUI (Textual)   │ ── REST / WS ───────→│  send → TOOL_CALL → execute │
+│  -tui/           │                       │  → send result → repeat    │
+└──────────────────┘                       └──────────┬──────────────────┘
+                                                      │ POST /tools/run
+                                                      ▼
+                                           ┌──────────────────────┐
+                                           │  Tool Server         │
+                                           │  tools/tool_server.py│
+                                           │  calculator          │
+                                           │  web_search          │
+                                           │  file_read           │
+                                           └──────────────────────┘
 ```
 
-## Key Insight (v3)
+## Environment Variables
 
-React controlled inputs ignore JavaScript `value` setter, synthetic `InputEvent`, and even `nativeInputValueSetter`.
-
-What **doesn't** work from SSH:
-- ❌ `osascript keystroke` — blocked by macOS Accessibility
-- ❌ CGEvent (Swift) — HID events don't reach web content
-- ❌ JS `InputEvent` / `nativeInputValueSetter` — React ignores synthetic events
-
-What **does** work:
-- ✅ `document.execCommand('insertText')` — triggers real input in the browser
-- ✅ JS `button.click()` on Send button — no System Events needed
-
-Zero permissions, zero dependencies, pure JavaScript injection via AppleScript.
-
-## Credits
-
-v3 architecture designed by Claude Opus 4.6 (via [Antigravity](https://antigravity.so)), System Events bypass by 小灵 🦞.
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `GROK_HOST` | 0.0.0.0 | Bind address |
+| `GROK_PORT` | 19998 | Bind port |
+| `GROK_PROFILE_DIR` | ~/.grok-bridge/firefox-profile | Chromium profile path |
+| `GROK_HEADLESS` | 0 | Run browser headless (1=yes) |
+| `GROK_PAGE_TIMEOUT` | 60 | Page/script timeout (seconds) |
+| `TOOL_SERVER_URL` | http://localhost:19997 | Tool server for /agent |
+| `GROK_PROJECT_URL` | — | Grok project URL for persistent instructions |
 
 ## License
 

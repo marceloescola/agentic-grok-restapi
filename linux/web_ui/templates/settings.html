@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% block content %}
+<form class="settings-form" onsubmit="return saveSettings(event)">
+  <div class="section-title">Connection</div>
+  <label>
+    Bridge Server URL
+    <input type="text" id="s-server-url" placeholder="http://localhost:19998">
+  </label>
+
+  <div class="section-title">Defaults</div>
+  <label>
+    Chat Timeout (s)
+    <input type="number" id="s-timeout" min="5" max="900">
+  </label>
+  <label>
+    Agent Timeout (s)
+    <input type="number" id="s-agent-timeout" min="5" max="900">
+  </label>
+  <label>
+    Agent Max Steps
+    <input type="number" id="s-max-steps" min="1" max="20">
+  </label>
+
+  <div class="section-title">Streaming</div>
+  <label class="toggle-row">
+    <input type="checkbox" id="s-streaming">
+    <span>WebSocket streaming (SSE)</span>
+  </label>
+
+  <div class="btn-row">
+    <button type="submit" class="save">Save</button>
+    <button type="button" class="reset" onclick="resetSettings()">Reset</button>
+  </div>
+  <div id="settings-status"></div>
+</form>
+<script>
+  var defaults = {
+    server_url: 'http://localhost:19998',
+    timeout: 120,
+    agent_timeout: 120,
+    max_steps: 10,
+    streaming: false
+  };
+
+  function loadSettings() {
+    try {
+      var saved = JSON.parse(localStorage.getItem('grok_settings') || '{}');
+      Object.keys(defaults).forEach(function(k) {
+        if (!(k in saved)) saved[k] = defaults[k];
+      });
+      return saved;
+    } catch(e) {
+      return Object.assign({}, defaults);
+    }
+  }
+
+  function applySettings() {
+    var s = loadSettings();
+    document.getElementById('s-server-url').value = s.server_url;
+    document.getElementById('s-timeout').value = s.timeout;
+    document.getElementById('s-agent-timeout').value = s.agent_timeout;
+    document.getElementById('s-max-steps').value = s.max_steps;
+    document.getElementById('s-streaming').checked = s.streaming;
+  }
+
+  function saveSettings(event) {
+    event.preventDefault();
+    var s = {
+      server_url: document.getElementById('s-server-url').value.trim(),
+      timeout: parseInt(document.getElementById('s-timeout').value) || 120,
+      agent_timeout: parseInt(document.getElementById('s-agent-timeout').value) || 120,
+      max_steps: parseInt(document.getElementById('s-max-steps').value) || 10,
+      streaming: document.getElementById('s-streaming').checked
+    };
+    localStorage.setItem('grok_settings', JSON.stringify(s));
+    document.getElementById('settings-status').innerHTML = '<span style="color:var(--green)">Settings saved</span>';
+    // Also sync stream toggle
+    var toggle = document.getElementById('stream-toggle');
+    if (toggle) toggle.checked = s.streaming;
+    return false;
+  }
+
+  function resetSettings() {
+    localStorage.removeItem('grok_settings');
+    applySettings();
+    document.getElementById('settings-status').innerHTML = '<span style="color:var(--yellow)">Defaults restored</span>';
+  }
+
+  applySettings();
+</script>
+{% endblock %}

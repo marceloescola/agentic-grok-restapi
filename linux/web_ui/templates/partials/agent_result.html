@@ -1,0 +1,32 @@
+<div class="message you">
+  <div class="sender">You:</div>
+  <div class="text">{{ prompt }}</div>
+</div>
+{% if result.status == "ok" %}
+  {% if result.steps %}
+    {% for step in result.steps %}
+<div class="agent-step">
+  <span class="label">Step {{ step.step }}:</span>
+  <strong>{{ step.tool }}</strong>
+  <div class="args">{{ step.args }}</div>
+  <span class="result">{{ (step.result or "")[:200] }}{% if step.result and step.result|length > 200 %}...{% endif %}</span>
+</div>
+    {% endfor %}
+  {% endif %}
+  {% if result.response %}
+<div class="message bot">
+  <div class="sender">Grok ({{ result.step_count }} steps):</div>
+  <div class="text">{{ result.response | nl2br }}</div>
+</div>
+  {% endif %}
+{% elif result.error %}
+<div class="message bot error">
+  <div class="sender">Error:</div>
+  <div class="text">{{ (result.response or result.error) | nl2br }}</div>
+</div>
+{% else %}
+<div class="message bot error">
+  <div class="sender">Error:</div>
+  <div class="text">{{ result.error or "No response" }}</div>
+</div>
+{% endif %}

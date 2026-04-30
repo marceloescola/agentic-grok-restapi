@@ -105,7 +105,9 @@ class GrokAgent:
         if not tool_defs:
             return await self._engine.chat(prompt=user_prompt, timeout=timeout)
 
-        result: Dict[str, Any] = await self._engine.send_and_wait(prompt=user_prompt, timeout=timeout)
+        result: Dict[str, Any] = await self._engine.send_and_wait(
+            prompt=user_prompt, timeout=timeout, reuse_page=True,
+        )
 
         steps: List[Dict[str, Any]] = []
         for step in range(max_steps):
@@ -126,7 +128,7 @@ class GrokAgent:
                     "That format didn't parse. Use TOOL_CALL with a name field, "
                     f'like: TOOL_CALL {{"name":"calculator","arguments":{{"expression":"..."}}}}'
                 )
-                result = await self._engine.send_and_wait(prompt=err_msg, timeout=timeout)
+                result = await self._engine.send_and_wait(prompt=err_msg, timeout=timeout, reuse_page=True)
                 continue
 
             if tool_name not in ALL_TOOLS:
@@ -134,7 +136,7 @@ class GrokAgent:
                     f"Unknown tool '{tool_name}'. "
                     f"Available: {', '.join(ALL_TOOLS)}. Try again?"
                 )
-                result = await self._engine.send_and_wait(prompt=err_msg, timeout=timeout)
+                result = await self._engine.send_and_wait(prompt=err_msg, timeout=timeout, reuse_page=True)
                 continue
 
             print(
@@ -158,6 +160,7 @@ class GrokAgent:
             result = await self._engine.send_and_wait(
                 prompt=build_tool_result_message(tool_name, tool_result),
                 timeout=timeout,
+                reuse_page=True,
             )
 
         result["step_count"] = max_steps
@@ -175,14 +178,14 @@ class GrokAgent:
         tool_defs: List[Any] = get_tool_defs(list(tools) if tools else None)
 
         if not tool_defs:
-            async for event in self._engine.watch_response(prompt=user_prompt, timeout=timeout):
+            async for event in self._engine.watch_response(prompt=user_prompt, timeout=timeout, reuse_page=True):
                 yield event
             return
 
         steps: List[Dict[str, Any]] = []
         response_text: str = ""
 
-        async for event in self._engine.watch_response(prompt=user_prompt, timeout=timeout):
+        async for event in self._engine.watch_response(prompt=user_prompt, timeout=timeout, reuse_page=True):
             if event["type"] in ("done", "timeout", "error"):
                 response_text = event.get("content", "")
                 break
@@ -204,7 +207,7 @@ class GrokAgent:
                     "That format didn't parse. Use TOOL_CALL with a name field, "
                     f'like: TOOL_CALL {{"name":"calculator","arguments":{{"expression":"..."}}}}'
                 )
-                async for event in self._engine.watch_response(prompt=err_msg, timeout=timeout):
+                async for event in self._engine.watch_response(prompt=err_msg, timeout=timeout, reuse_page=True):
                     if event["type"] in ("done", "timeout", "error"):
                         response_text = event.get("content", "")
                         break
@@ -215,7 +218,7 @@ class GrokAgent:
                     f"Unknown tool '{tool_name}'. "
                     f"Available: {', '.join(ALL_TOOLS)}. Try again?"
                 )
-                async for event in self._engine.watch_response(prompt=err_msg, timeout=timeout):
+                async for event in self._engine.watch_response(prompt=err_msg, timeout=timeout, reuse_page=True):
                     if event["type"] in ("done", "timeout", "error"):
                         response_text = event.get("content", "")
                         break
@@ -246,6 +249,7 @@ class GrokAgent:
             async for event in self._engine.watch_response(
                 prompt=build_tool_result_message(tool_name, tool_result),
                 timeout=timeout,
+                reuse_page=True,
             ):
                 if event["type"] in ("done", "timeout", "error"):
                     response_text = event.get("content", "")

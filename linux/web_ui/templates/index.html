@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="toolbar">
+  <button hx-post="/api/new" hx-target="#chat-log" hx-swap="innerHTML">New</button>
+  <button hx-get="/api/health" hx-target="#chat-log" hx-swap="beforeend">Health</button>
+  <button hx-get="/api/history" hx-target="#chat-log" hx-swap="beforeend">History</button>
+  <label class="stream-toggle">
+    <input type="checkbox" id="stream-toggle">
+    <span>Stream</span>
+  </label>
+</div>
+<div id="chat-log" class="chat-log">
+  <div class="welcome">Grok Bridge Web UI — type a message to start.</div>
+</div>
+<div id="files-bar">
+  <input type="text" id="files-input" placeholder="File paths (comma-separated, optional)">
+</div>
+<form id="chat-form" class="input-bar"
+      action="/api/chat" method="POST"
+      hx-post="/api/chat" hx-target="#chat-log" hx-swap="beforeend"
+      onsubmit="return handleStreamingSubmit(event, 'chat-log')">
+  <input type="hidden" name="files" id="files-hidden" value="">
+  <input type="text" name="prompt" id="prompt-input" placeholder="Type a message..." required autofocus>
+  <button type="submit">Send</button>
+</form>
+<script>
+  document.getElementById('chat-form').addEventListener('submit', function() {
+    document.getElementById('files-hidden').value = document.getElementById('files-input').value;
+  });
+  (function() {
+    var toggle = document.getElementById('stream-toggle');
+    try {
+      var s = JSON.parse(localStorage.getItem('grok_settings') || '{}');
+      toggle.checked = s.streaming === true;
+    } catch(e) {}
+    toggle.addEventListener('change', function() {
+      try {
+        var s = JSON.parse(localStorage.getItem('grok_settings') || '{}');
+        s.streaming = this.checked;
+        localStorage.setItem('grok_settings', JSON.stringify(s));
+      } catch(e) {}
+    });
+  })();
+</script>
+{% endblock %}

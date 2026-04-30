@@ -1,0 +1,104 @@
+from __future__ import annotations
+
+import json
+from typing import Any, AsyncGenerator, Dict, List, Optional
+
+import httpx
+from websockets.asyncio.client import connect
+
+
+class BridgeClient:
+    def __init__(self, base_url: str = "http://localhost:19998") -> None:
+        self._base_url = base_url.rstrip("/")
+        self._http = httpx.AsyncClient(timeout=httpx.Timeout(300.0, connect=5.0))
+
+    @property
+    def base_url(self) -> str:
+        return self._base_url
+
+    def _url(self, path: str) -> str:
+        return f"{self._base_url}{path}"
+
+    def _ws_url(self) -> str:
+        rest = self._base_url
+        return rest.replace("http://", "ws://").replace("https://", "wss://") + "/ws"
+
+    async def chat(
+        self,
+        prompt: str,
+        timeout: int = 120,
+        files: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        body: Dict[str, Any] = {"prompt": prompt, "timeout": timeout}
+        if files:
+            body["files"] = files
+        resp = await self._http.post(self._url("/chat"), json=body)
+        resp.raise_for_status()
+        return resp.json()
+
+    async def agent(
+        self,
+        prompt: str,
+        timeout: int = 120,
+        tools: Optional[List[str]] = None,
+        max_steps: int = 10,
+    ) -> Dict[str, Any]:
+        body: Dict[str, Any] = {
+            "prompt": prompt,
+            "timeout": timeout,
+            "max_steps": max_steps,
+        }
+        if tools:
+            body["tools"] = tools
+        resp = await self._http.post(self._url("/agent"), json=body)
+        resp.raise_for_status()
+        return resp.json()
+
+    async def new_conversation(self) -> Dict[str, Any]:
+        resp = await self._http.post(self._url("/new"), json={})
+        resp.raise_for_status()
+        return resp.json()
+
+    async def health(self) -> Dict[str, Any]:
+        resp = await self._http.get(self._url("/health"))
+        resp.raise_for_status()
+        return resp.json()
+
+    async def history(self) -> Dict[str, Any]:
+        resp = await self._http.get(self._url("/history"))
+        resp.raise_for_status()
+        return resp.json()
+
+    async def close(self) -> None:
+        await self._http.aclose()
+
+    async def stream_prompt(
+        self,
+        prompt: str,
+        mode: str = "chat",
+        files: Optional[List[str]] = None,
+        tools: Optional[List[str]] = None,
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        msg: Dict[str, Any] = {
+            "type": "prompt",
+            "content": prompt,
+            "mode": mode,
+        }
+        if files:
+            msg["files"] = files
+        if tools:
+            msg["tools"] = tools
+        try:
+            async with connect(self._ws_url()) as ws:
+                await ws.send(json.dumps(msg))
+                async for raw in ws:
+                    data: str = raw if isinstance(raw, str) else raw.decode()
+                    event: Dict[str, Any] = json.loads(data)
+                    yield event
+                    t: str = event.get("type", "")
+                    if t in ("done", "error", "timeout"):
+                        break
+                    if t == "status" and event.get("state") in ("done", "max_steps"):
+                        break
+        except Exception as exc:
+            yield {"type": "error", "content": str(exc)}

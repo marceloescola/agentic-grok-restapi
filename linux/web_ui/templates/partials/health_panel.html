@@ -1,0 +1,19 @@
+<div class="message bot" style="max-width:100%">
+  <div class="sender">Health Check</div>
+  <div class="health-grid">
+    <span class="key">Status:</span>
+    <span class="val" style="color:var(--green)">{{ info.status }}</span>
+    <span class="key">Version:</span>
+    <span class="val">{{ info.version }}</span>
+    <span class="key">Engine:</span>
+    <span class="val">{{ info.active_engine }}</span>
+    <span class="key">On grok.com:</span>
+    <span class="val">{{ "yes" if info.on_grok else "no" }}</span>
+    <span class="key">URL:</span>
+    <span class="val">{{ info.url }}</span>
+    {% if info.available_engines %}
+    <span class="key">Engines:</span>
+    <span class="val">{{ info.available_engines }}</span>
+    {% endif %}
+  </div>
+</div>

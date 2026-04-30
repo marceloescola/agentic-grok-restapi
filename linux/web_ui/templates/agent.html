@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="toolbar">
+  <label class="stream-toggle">
+    <input type="checkbox" id="stream-toggle">
+    <span>Stream</span>
+  </label>
+</div>
+<div class="agent-config">
+  <div class="section-title">Tools</div>
+  <div class="agent-tools">
+    <label><input type="checkbox" name="tool" value="calculator" checked> Calculator</label>
+    <label><input type="checkbox" name="tool" value="web_search" checked> Web Search</label>
+    <label><input type="checkbox" name="tool" value="file_read" checked> File Read</label>
+  </div>
+  <div class="agent-row">
+    <label for="file-path">File:</label>
+    <input type="text" id="file-path" name="file_path" placeholder="/path/to/file">
+  </div>
+  <div class="agent-row">
+    <label for="max-steps">Max Steps:</label>
+    <input type="number" id="max-steps" name="max_steps" value="10" min="1" max="20">
+  </div>
+</div>
+<div id="agent-output" class="agent-output">
+  <div class="welcome">Agent Mode — define tools and prompt, then run.</div>
+</div>
+<form id="agent-form" class="input-bar"
+      action="/api/agent" method="POST"
+      hx-post="/api/agent" hx-target="#agent-output" hx-swap="beforeend"
+      onsubmit="return handleStreamingSubmit(event, 'agent-output')">
+  <input type="hidden" name="tools" id="tools-hidden" value="">
+  <input type="hidden" name="file_path" id="file-path-hidden" value="">
+  <input type="hidden" name="max_steps" id="max-steps-hidden" value="10">
+  <input type="text" name="prompt" id="agent-prompt" placeholder="Enter agent prompt..." required>
+  <button type="submit">Run Agent</button>
+</form>
+<script>
+  document.getElementById('agent-form').addEventListener('submit', function() {
+    var checked = document.querySelectorAll('.agent-tools input[name="tool"]:checked');
+    var tools = Array.from(checked).map(function(cb) { return cb.value; });
+    document.getElementById('tools-hidden').value = tools.join(',');
+    document.getElementById('file-path-hidden').value = document.getElementById('file-path').value;
+    document.getElementById('max-steps-hidden').value = document.getElementById('max-steps').value;
+  });
+  (function() {
+    var toggle = document.getElementById('stream-toggle');
+    try {
+      var s = JSON.parse(localStorage.getItem('grok_settings') || '{}');
+      toggle.checked = s.streaming === true;
+    } catch(e) {}
+    toggle.addEventListener('change', function() {
+      try {
+        var s = JSON.parse(localStorage.getItem('grok_settings') || '{}');
+        s.streaming = this.checked;
+        localStorage.setItem('grok_settings', JSON.stringify(s));
+      } catch(e) {}
+    });
+  })();
+</script>
+{% endblock %}

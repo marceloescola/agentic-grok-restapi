@@ -1,0 +1,11 @@
+<div class="message bot" style="max-width:100%">
+  <div class="sender">History ({{ result.raw_length }} chars)</div>
+  {% if result.status == "ok" %}
+  <div class="history-content">{{ (result.content[:3000] if result.content) | nl2br }}</div>
+    {% if result.content and result.content|length > 3000 %}
+  <div style="color:var(--text-dim);font-size:12px;margin-top:4px">... truncated ({{ result.raw_length }} chars total)</div>
+    {% endif %}
+  {% else %}
+  <div class="error">{{ result.error or "Failed to load history" }}</div>
+  {% endif %}
+</div>

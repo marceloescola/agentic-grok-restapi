@@ -193,6 +193,7 @@ class GrokPlaywrightEngine:
         self._playwright: Any = None
         self.context: Any = None
         self.page: Any = None
+        self._agentic_mode: bool = False
 
     @staticmethod
     def available() -> bool:
@@ -411,7 +412,9 @@ class GrokPlaywrightEngine:
         return await self._ensure_on_grok()
 
     def _grok_url(self) -> str:
-        return self.cfg.project_url or GROK_URL
+        if self._agentic_mode and self.cfg.project_url:
+            return self.cfg.project_url
+        return GROK_URL
 
     async def _ensure_on_grok(self, force_navigate: bool = False) -> str:
         await self.start()
@@ -435,10 +438,13 @@ class GrokPlaywrightEngine:
             raise EngineRuntimeError("input not found on grok page")
         return selector
 
-    async def new_conversation(self) -> None:
+    async def new_conversation(self, agentic: bool = False) -> None:
         await self.start()
         assert self.page is not None
-        target: str = self._grok_url()
+
+        self._agentic_mode = agentic
+        target: str = self.cfg.project_url if (agentic and self.cfg.project_url) else GROK_URL
+
         try:
             await self.page.goto(
                 target,
@@ -522,8 +528,16 @@ class GrokPlaywrightEngine:
         prompt: str,
         timeout: int = 120,
         files: Optional[Sequence[str]] = None,
+        reuse_page: bool = False,
     ) -> Dict[str, Any]:
-        input_selector: str = await self._ensure_on_grok(force_navigate=False)
+        if reuse_page:
+            await self.start()
+            assert self.page is not None
+            input_selector: Optional[str] = await self._find_input_selector(timeout_seconds=25)
+            if not input_selector:
+                raise EngineRuntimeError("input not found")
+        else:
+            input_selector = await self._ensure_on_grok(force_navigate=False)
         start: float = time.time()
 
         if files:
@@ -605,8 +619,16 @@ class GrokPlaywrightEngine:
         prompt: str,
         timeout: int = 120,
         files: Optional[Sequence[str]] = None,
+        reuse_page: bool = False,
     ) -> AsyncGenerator[Dict[str, Any], None]:
-        input_selector: str = await self._ensure_on_grok(force_navigate=False)
+        if reuse_page:
+            await self.start()
+            assert self.page is not None
+            input_selector: Optional[str] = await self._find_input_selector(timeout_seconds=25)
+            if not input_selector:
+                raise EngineRuntimeError("input not found")
+        else:
+            input_selector = await self._ensure_on_grok(force_navigate=False)
         if files:
             await self._attach_files(files)
 
@@ -872,9 +894,9 @@ class GrokEngineManager:
         except Exception as exc:
             return {"status": "error", "error": str(exc)}
 
-    async def new_conversation(self) -> Dict[str, Any]:
+    async def new_conversation(self, agentic: bool = False) -> Dict[str, Any]:
         try:
-            await self._engine.new_conversation()
+            await self._engine.new_conversation(agentic=agentic)
             return {"status": "ok", "engine": self._engine.name}
         except Exception as exc:
             return {"status": "error", "error": str(exc)}
@@ -913,6 +935,7 @@ class GrokEngineManager:
             timeout = 5
 
         try:
+            await self._engine.new_conversation(agentic=True)
             agent: GrokAgent = GrokAgent(self._engine, self._tool_server_url)
             result: Dict[str, Any] = await agent.run(
                 user_prompt=prompt,
@@ -945,6 +968,7 @@ class GrokEngineManager:
     ) -> AsyncGenerator[Dict[str, Any], None]:
         from agent import GrokAgent
 
+        await self._engine.new_conversation(agentic=True)
         agent: GrokAgent = GrokAgent(self._engine, self._tool_server_url)
         async for event in agent.run_streaming(
             user_prompt=prompt,

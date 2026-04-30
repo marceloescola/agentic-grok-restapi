@@ -1,0 +1,20 @@
+<div class="message you">
+  <div class="sender">You:</div>
+  <div class="text">{{ prompt }}</div>
+</div>
+{% if result.status == "ok" %}
+<div class="message bot">
+  <div class="sender">Grok:</div>
+  <div class="text">{{ result.response | nl2br }}</div>
+</div>
+{% elif result.error %}
+<div class="message bot error">
+  <div class="sender">Error:</div>
+  <div class="text">{{ (result.response or result.error) | nl2br }}</div>
+</div>
+{% else %}
+<div class="message bot">
+  <div class="sender">Grok:</div>
+  <div class="text">{{ (result.response or result.error or "No response") | nl2br }}</div>
+</div>
+{% endif %}

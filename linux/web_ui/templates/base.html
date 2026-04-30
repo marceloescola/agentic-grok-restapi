@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Grok Bridge</title>
+  <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+  <link rel="stylesheet" href="/static/style.css">
+  <script>
+    // SSE streaming helper
+    function startStream(streamId) {
+      var textEl = document.getElementById('stream-text-' + streamId);
+      var containerEl = document.getElementById('stream-' + streamId);
+      if (!textEl || !containerEl) return;
+      var es = new EventSource('/api/stream/' + streamId);
+      es.addEventListener('message', function(e) {
+        textEl.innerHTML = e.data;
+        var log = textEl.closest('.chat-log') || textEl.closest('.agent-output');
+        if (log) log.scrollTop = log.scrollHeight;
+      });
+      es.addEventListener('tool_call', function(e) {
+        var div = document.createElement('div');
+        div.innerHTML = e.data;
+        containerEl.insertBefore(div.firstChild, textEl);
+      });
+      es.addEventListener('tool_result', function(e) {
+        var div = document.createElement('div');
+        div.innerHTML = e.data;
+        containerEl.insertBefore(div.firstChild, textEl);
+      });
+      es.addEventListener('done', function(e) {
+        var log = document.getElementById('chat-log') || document.getElementById('agent-output');
+        if (log) {
+          var temp = document.createElement('div');
+          temp.innerHTML = e.data;
+          log.appendChild(temp.firstChild);
+          log.scrollTop = log.scrollHeight;
+        }
+        containerEl.remove();
+        es.close();
+      });
+      es.addEventListener('error', function(e) {
+        textEl.innerHTML = '<span class="error">' + (e.data || 'Stream error') + '</span>';
+        es.close();
+      });
+    }
+
+    // Handle streaming form submit
+    function handleStreamingSubmit(event, targetId) {
+      var toggle = document.getElementById('stream-toggle');
+      if (!toggle || !toggle.checked) return true;
+      event.preventDefault();
+      var form = event.target;
+
+      // Read field values directly (some may live outside the form)
+      var body = new URLSearchParams();
+      body.set('prompt', form.querySelector('[name="prompt"]')?.value || '');
+      body.set('streaming', 'true');
+      body.set('timeout', form.querySelector('[name="timeout"]')?.value || '120');
+      // files from the files-bar (outside form on chat page)
+      var fi = document.getElementById('files-input');
+      if (fi) body.set('files', fi.value);
+      // agent fields (outside form on agent page)
+      var fp = document.getElementById('file-path');
+      if (fp) body.set('file_path', fp.value);
+      var ms = document.getElementById('max-steps');
+      if (ms) body.set('max_steps', ms.value);
+      var toolsCbs = document.querySelectorAll('.agent-tools input[name="tool"]:checked');
+      if (toolsCbs.length) {
+        body.set('tools', Array.from(toolsCbs).map(function(cb) { return cb.value; }).join(','));
+      }
+
+      fetch(form.action, {
+        method: 'POST',
+        body: body,
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+      })
+      .then(function(r) { return r.text(); })
+      .then(function(html) {
+        var target = document.getElementById(targetId);
+        if (target) {
+          target.insertAdjacentHTML('beforeend', html);
+          target.scrollTop = target.scrollHeight;
+          // Start streams for any SSE containers
+          target.querySelectorAll('[data-stream-id]').forEach(function(el) {
+            startStream(el.dataset.streamId);
+          });
+        }
+      });
+      var input = form.querySelector('[name="prompt"]');
+      if (input) input.value = '';
+      return false;
+    }
+  </script>
+</head>
+<body>
+  <nav>
+    <span class="brand">Grok Bridge</span>
+    <a href="/" class="{{ 'active' if request.url.path == '/' else '' }}">Chat</a>
+    <a href="/agent" class="{{ 'active' if request.url.path == '/agent' else '' }}">Agent</a>
+    <a href="/settings" class="{{ 'active' if request.url.path == '/settings' else '' }}">Settings</a>
+  </nav>
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+  <footer>
+    <span hx-get="/api/health" hx-trigger="load, every 30s" hx-swap="innerHTML">
+      Connecting...
+    </span>
+  </footer>
+</body>
+</html>

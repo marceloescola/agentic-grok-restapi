@@ -1,0 +1,13 @@
+<div class="message you">
+  <div class="sender">You:</div>
+  <div class="text">{{ prompt }}</div>
+</div>
+{% if tools %}
+<div class="agent-step">
+  <span class="label">Tools:</span> {{ tools | join(", ") }}
+</div>
+{% endif %}
+<div id="stream-{{ stream_id }}" class="stream-container" data-stream-id="{{ stream_id }}">
+  <div class="sender">Grok (agent):</div>
+  <div id="stream-text-{{ stream_id }}" class="streaming-text"></div>
+</div>

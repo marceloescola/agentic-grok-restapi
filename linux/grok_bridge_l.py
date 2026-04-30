@@ -42,7 +42,7 @@ class AgentRequest(BaseModel):
 
 
 class NewRequest(BaseModel):
-    pass
+    agentic: bool = Field(default=False)
 
 
 def _as_bool(value: str) -> bool:
@@ -93,7 +93,8 @@ def create_app(manager: GrokEngineManager) -> FastAPI:
 
     @app.post("/new")
     async def new(req: Optional[NewRequest] = None) -> dict[str, Any]:
-        return await manager.new_conversation()
+        agentic: bool = req.agentic if req else False
+        return await manager.new_conversation(agentic=agentic)
 
     @app.get("/health")
     async def health() -> dict[str, Any]:

@@ -72,9 +72,11 @@ class GrokClient:
 
     async def load_session(self, session_id: int) -> dict[str, Any]:
         resp = await self._http.post(
-            self._url("/sessions/load"), json={"id": session_id}
+            self._url("/sessions/load"), json={"session_id": session_id}
         )
-        resp.raise_for_status()
+        if not resp.is_success:
+            detail: str = str(resp.text)
+            raise RuntimeError(f"HTTP {resp.status_code}: {detail}")
         return resp.json()
 
     async def delete_session(self, session_id: int) -> dict[str, Any]:

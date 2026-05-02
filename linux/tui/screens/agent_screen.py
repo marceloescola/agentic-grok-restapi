@@ -142,6 +142,7 @@ class AgentScreen(Screen):
                 await self._run_rest(prompt, tools, max_steps, files)
         finally:
             run_btn.disabled = False
+            self.query_one("#agent-prompt", Input).clear()
 
     async def _run_rest(
         self, prompt: str, tools: List[str], max_steps: int, files: List[str]

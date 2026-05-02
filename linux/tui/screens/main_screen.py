@@ -83,6 +83,7 @@ class MainScreen(Screen):
     async def on_input_submitted(self, event: Input.Submitted):
         if event.input.id == "prompt-input" and event.value.strip():
             await self._send_prompt(event.value.strip())
+            event.input.clear()
 
     async def on_button_pressed(self, event: Button.Pressed):
         btn_id = event.button.id
@@ -302,3 +303,4 @@ class MainScreen(Screen):
         self._update_status(
             f"[green]Session loaded[/green] ({len(messages)} messages)"
         )
+        self.query_one("#prompt-input", Input).focus()

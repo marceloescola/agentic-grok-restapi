@@ -24,16 +24,19 @@ GROK_URL: str = "https://grok.com/"
 ENGINE_VERSION: str = "v3-linux-playwright-chromium"
 
 INPUT_SELECTORS: List[str] = [
-    "textarea",
     'div[contenteditable="true"]',
     '[data-testid="text-input"]',
     '[role="textbox"]',
+    "textarea",
 ]
 
 SEND_SELECTORS: List[str] = [
     'button[aria-label="Send"]',
     'button[data-testid="send-button"]',
     '[data-testid="send-button"] button',
+    'button[type="submit"]',
+    'button svg[class*="send"]',
+    'button svg[class*="arrow"]',
 ]
 
 FILE_INPUT_SELECTORS: List[str] = [
@@ -177,42 +180,40 @@ SCRAPE_MESSAGES_JS: str = """
 () => {
   const messages = [];
   const seen = new Set();
-  const selectors = [
-    '[data-message-author-role="user"]',
-    '[data-message-author-role="assistant"]',
-  ];
-  for (const sel of selectors) {
-    const els = document.querySelectorAll(sel);
-    if (els.length > 0) {
-      let found = false;
-      els.forEach(el => {
-        const text = el.innerText.trim();
-        if (text && !seen.has(text)) {
-          seen.add(text);
-          messages.push({
-            role: el.getAttribute('data-message-author-role') || 'user',
-            content: text,
-          });
-          found = true;
-        }
-      });
-      if (found) return JSON.stringify(messages);
-    }
-  }
-  const container = document.querySelector('div.relative.flex.w-full.flex-col.items-center');
-  if (container) {
-    const chatEls = container.querySelectorAll('[data-message-author-role]');
-    chatEls.forEach(el => {
+  const roleAttr = '[data-message-author-role]';
+  const roleEls = document.querySelectorAll(roleAttr);
+  if (roleEls.length > 0) {
+    roleEls.forEach(el => {
       const text = el.innerText.trim();
       if (text && !seen.has(text)) {
         seen.add(text);
-        messages.push({
-          role: el.getAttribute('data-message-author-role') || 'user',
-          content: text,
-        });
+        messages.push({ role: el.getAttribute('data-message-author-role') || 'user', content: text });
       }
     });
+    if (messages.length > 0) return JSON.stringify(messages);
   }
+  const main = document.querySelector('main') || document.querySelector('[role="main"]') || document.body;
+  const groups = main.querySelectorAll('div[class*="group"], div[class*="message"], section[class*="message"]');
+  if (groups.length > 0) {
+    let idx = 0;
+    groups.forEach(el => {
+      const text = el.innerText.trim();
+      if (text && text.length > 5 && !seen.has(text)) {
+        seen.add(text);
+        messages.push({ role: idx % 2 === 0 ? 'user' : 'assistant', content: text });
+        idx++;
+      }
+    });
+    if (messages.length > 0) return JSON.stringify(messages);
+  }
+  allDivs = document.querySelectorAll('div[class*="prose"], div[class*="markdown"], div[class*="message-content"], div[class*="response"]');
+  allDivs.forEach(el => {
+    const text = el.innerText.trim();
+    if (text && text.length > 10 && !seen.has(text)) {
+      seen.add(text);
+      messages.push({ role: messages.length % 2 === 0 ? 'user' : 'assistant', content: text });
+    }
+  });
   return JSON.stringify(messages.length > 0 ? messages : null);
 }
 """
@@ -361,7 +362,9 @@ class GrokPlaywrightEngine:
                 except Exception:
                     element = None
                 if element is not None:
-                    return selector
+                    visible: bool = await element.is_visible()
+                    if visible:
+                        return selector
             await self._sleep_jitter(0.14, 0.22)
         return None
 
@@ -428,6 +431,8 @@ class GrokPlaywrightEngine:
     async def _type_and_send(self, prompt: str, input_selector: str) -> None:
         if self.page is None:
             raise EngineRuntimeError("playwright page is not started")
+
+        await _async_sleep(random.uniform(0.1, 0.5))
 
         result: Any = await self.page.evaluate(INSERT_TEXT_JS, {"selector": input_selector, "text": prompt})
         if "OK" not in str(result):
@@ -597,14 +602,17 @@ class GrokPlaywrightEngine:
             if body == last:
                 stable += 1
                 if stable >= 3:
-                    extracted: str = self._extract(body, prompt)
+                    extracted = self._extract(body, prompt)
                     if not extracted:
                         extracted = await self._get_response_via_dom() or ""
-                    return {
-                        "status": "ok",
-                        "response": extracted,
-                        "elapsed": round(time.time() - start, 1),
-                    }
+                    if extracted and self._is_intermediate(extracted):
+                        stable = 0
+                    else:
+                        return {
+                            "status": "ok",
+                            "response": extracted,
+                            "elapsed": round(time.time() - start, 1),
+                        }
             else:
                 stable = 0
             last = body
@@ -659,17 +667,21 @@ class GrokPlaywrightEngine:
             elapsed: float = time.time() - start
 
             # Fast path: DOM extraction — requires stability to avoid partial reads
-            extracted: Optional[str] = await self._get_response_via_dom()
+            extracted = await self._get_response_via_dom()
             if extracted:
                 if extracted == last_dom:
                     dom_stable += 1
                     if dom_stable >= 2:  # ~0.6s of identical text → generation done
-                        return {
-                            "status": "ok",
-                            "response": self._clean(extracted),
-                            "_raw": extracted,
-                            "elapsed": round(elapsed, 1),
-                        }
+                        cleaned: str = self._clean(extracted)
+                        if self._is_intermediate(cleaned):
+                            dom_stable = 0
+                        else:
+                            return {
+                                "status": "ok",
+                                "response": cleaned,
+                                "_raw": extracted,
+                                "elapsed": round(elapsed, 1),
+                            }
                 else:
                     last_dom = extracted
                     dom_stable = 0
@@ -680,24 +692,33 @@ class GrokPlaywrightEngine:
                 continue
 
             entered_body_fallback = True
-            body: str = await self._get_body()
+            body = await self._get_body()
             if body == last_body:
                 body_stable += 1
                 if body_stable >= 2:  # ~0.6s stable on body text
                     extracted = await self._get_response_via_dom()
                     if extracted:
-                        return {
-                            "status": "ok",
-                            "response": self._clean(extracted),
-                            "_raw": extracted,
-                            "elapsed": round(elapsed, 1),
-                        }
-                    return {
-                        "status": "ok",
-                        "response": self._extract(body, prompt) or "",
-                        "_raw": body[:2000],
-                        "elapsed": round(elapsed, 1),
-                    }
+                        cleaned = self._clean(extracted)
+                        if self._is_intermediate(cleaned):
+                            body_stable = 0
+                        else:
+                            return {
+                                "status": "ok",
+                                "response": cleaned,
+                                "_raw": extracted,
+                                "elapsed": round(elapsed, 1),
+                            }
+                    else:
+                        content: str = self._extract(body, prompt) or ""
+                        if self._is_intermediate(content):
+                            body_stable = 0
+                        else:
+                            return {
+                                "status": "ok",
+                                "response": content,
+                                "_raw": body[:2000],
+                                "elapsed": round(elapsed, 1),
+                            }
             else:
                 body_stable = 0
             last_body = body
@@ -765,8 +786,11 @@ class GrokPlaywrightEngine:
                     else:
                         dom_stable += 1
                         if dom_stable >= 2:
-                            yield {"type": "done", "content": extracted}
-                            return
+                            if self._is_intermediate(extracted):
+                                dom_stable = 0
+                            else:
+                                yield {"type": "done", "content": extracted}
+                                return
                 elif extracted != old_dom:
                     has_new = True
                     has_response = True
@@ -796,11 +820,18 @@ class GrokPlaywrightEngine:
                 if body_stable >= 2:
                     extracted = await self._get_response_via_dom()
                     if extracted:
-                        yield {"type": "done", "content": extracted}
+                        if self._is_intermediate(extracted):
+                            body_stable = 0
+                        else:
+                            yield {"type": "done", "content": extracted}
+                            return
                     else:
-                        content: str = self._extract(body, prompt) or ""
-                        yield {"type": "done", "content": content}
-                    return
+                        content = self._extract(body, prompt) or ""
+                        if self._is_intermediate(content):
+                            body_stable = 0
+                        else:
+                            yield {"type": "done", "content": content}
+                            return
             else:
                 body_stable = 0
             last_body_text = body
@@ -886,6 +917,32 @@ class GrokPlaywrightEngine:
     async def _sleep_jitter(base_seconds: float = 0.08, max_extra_seconds: float = 0.24) -> None:
         await _async_sleep(base_seconds + random.uniform(0.0, max_extra_seconds))
 
+    INTERMEDIATE_PATTERNS: List[str] = [
+        "Searched web",
+        "Pesquisado na web",
+        "Recherché sur le web",
+        "Gesucht im Web",
+        "Cercato sul web",
+        "Buscado en la web",
+        "results",
+        "Tool worked",
+        "Tool call",
+        "Calling tool",
+        "Using tool",
+        "Searching for",
+        "Searching the web",
+        "Browsing the web",
+        "Reading",
+        "Scraping",
+    ]
+
+    @staticmethod
+    def _is_intermediate(text: str) -> bool:
+        for p in GrokPlaywrightEngine.INTERMEDIATE_PATTERNS:
+            if p.lower() in text.lower():
+                return True
+        return bool(re.search(r"•\s*\d+(\.\d+)?[ms]", text))
+
     @staticmethod
     def _clean(text: str) -> str:
         for marker in [
@@ -923,6 +980,10 @@ class GrokPlaywrightEngine:
         text = re.sub(r"(?m)^Detecting.*\n?", "", text)
         text = re.sub(r"\n[0-9]+(\.[0-9]+)?s\n", "\n", text)
         text = re.sub(r"\n(Share|Compare|Make it|Explain|Toggle|Like|Dislike).*", "", text)
+        # Strip "Searched web" / "N results" lines
+        text = re.sub(r"(?m)^Searched web.*\n?", "", text)
+        text = re.sub(r"(?m)^\d+\s*results?\n?", "", text)
+        text = re.sub(r"(?m)^Tool worked.*\n?", "", text)
         text = re.sub(r"\n{3,}", "\n\n", text)
         return text.strip()
 
@@ -989,7 +1050,7 @@ class GrokEngineManager:
         if db is None:
             return None
         url: str = await self._engine.get_current_url()
-        if not url or "grok.com/chat/" not in url:
+        if not url or "grok.com/c/" not in url:
             return None
         if url == self._last_session_url:
             return None
@@ -1190,10 +1251,17 @@ class GrokEngineManager:
         timeout: int = 120,
         files: Optional[Sequence[str]] = None,
     ) -> AsyncGenerator[Dict[str, Any], None]:
+        last_event: Optional[Dict[str, Any]] = None
         async for event in self._engine.watch_response(
             prompt=prompt, timeout=timeout, files=files,
         ):
+            last_event = event
             yield event
+        if last_event and last_event.get("type") in ("done", "timeout", "error"):
+            try:
+                await self._maybe_save_session(prompt)
+            except Exception:
+                pass
 
     async def stream_agent(
         self,
@@ -1206,10 +1274,17 @@ class GrokEngineManager:
 
         await self._engine.new_conversation(agentic=True)
         agent: GrokAgent = GrokAgent(self._engine, self._tool_server_url)
+        last_event: Optional[Dict[str, Any]] = None
         async for event in agent.run_streaming(
             user_prompt=prompt,
             timeout=timeout,
             tools=list(tools) if tools else None,
             max_steps=max_steps,
         ):
+            last_event = event
             yield event
+        if last_event and last_event.get("type") in ("done", "timeout", "error"):
+            try:
+                await self._maybe_save_session(prompt)
+            except Exception:
+                pass

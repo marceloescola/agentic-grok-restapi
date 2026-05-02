@@ -16,15 +16,27 @@ import argparse
 import json
 import os
 import time
+import traceback
 from contextlib import asynccontextmanager
-from typing import Any, AsyncGenerator, Dict, List, Optional, Sequence
+from typing import Any, AsyncGenerator, Dict, List, Optional
+from typing import Sequence as Seq
 
 import uvicorn
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from grok_engine_l import ENGINE_VERSION, EngineConfig, GrokEngineManager
-from pydantic import BaseModel, Field
-
 from db import SessionDB
+from fastapi import Body, FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+from grok_engine_l import (
+    ENGINE_VERSION,
+    INPUT_SELECTORS,
+    INSERT_TEXT_JS,
+    SCRAPE_MESSAGES_JS,
+    SEND_SELECTORS,
+    SESSION_NAME_JS,
+    EngineConfig,
+    GrokEngineManager,
+)
+from pydantic import BaseModel, Field
 
 
 # Classes that will hold the model of chat request and agent request. Very good build the
@@ -54,12 +66,26 @@ def create_app(manager: GrokEngineManager) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> None:
         await manager.warmup()
+        await manager.new_conversation(agentic=False)
         yield
         await manager.shutdown()
 
     app: FastAPI = FastAPI(
         title="Grok Bridge Linux", version=ENGINE_VERSION, lifespan=lifespan
     )
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_exception_handler(
+        request: Request, exc: RequestValidationError
+    ) -> JSONResponse:
+        ts: str = time.strftime("%H:%M:%S")
+        print(f"[{ts}] VALIDATION ERROR: {exc.errors()}", flush=True)
+        print(f"[{ts}] Body: {await request.body()}", flush=True)
+        traceback.print_exc()
+        return JSONResponse(
+            status_code=422,
+            content={"detail": exc.errors(), "body": str(await request.body())},
+        )
 
     @app.post("/chat")
     async def chat(req: ChatRequest) -> dict[str, Any]:
@@ -111,14 +137,11 @@ def create_app(manager: GrokEngineManager) -> FastAPI:
     async def list_sessions() -> list[dict[str, Any]]:
         return await manager.list_sessions()
 
-    class LoadSessionRequest(BaseModel):
-        id: int
-
     @app.post("/sessions/load")
-    async def load_session(req: LoadSessionRequest) -> dict[str, Any]:
+    async def load_session(session_id: int = Body(embed=True)) -> dict[str, Any]:
         ts: str = time.strftime("%H:%M:%S")
-        print(f"[{ts}] SES>> load session {req.id}", flush=True)
-        result: dict[str, Any] = await manager.load_session(req.id)
+        print(f"[{ts}] SES>> load session {session_id}", flush=True)
+        result: dict[str, Any] = await manager.load_session(session_id)
         print(f"[{ts}] SES<< {result.get('status', 'error')}", flush=True)
         return result
 
@@ -129,6 +152,144 @@ def create_app(manager: GrokEngineManager) -> FastAPI:
         result: dict[str, Any] = await manager.delete_session(session_id)
         print(f"[{ts}] SES<< {result.get('status', 'error')}", flush=True)
         return result
+
+    @app.get("/debug/scrape")
+    async def debug_scrape() -> dict[str, Any]:
+        ts: str = time.strftime("%H:%M:%S")
+        print(f"[{ts}] DEBUG>> scrape test", flush=True)
+        try:
+            url: str = await manager._engine.get_current_url()
+            raw: Any = await manager._engine.page.evaluate(SCRAPE_MESSAGES_JS)
+            name_raw: Any = await manager._engine.page.evaluate(SESSION_NAME_JS)
+            body: str = await manager._engine.page.evaluate(
+                "() => document.body.innerText.substring(0, 2000)"
+            )
+            return {
+                "url": url,
+                "scrape_result": raw,
+                "session_name": name_raw,
+                "body_preview": body,
+            }
+        except Exception as exc:
+            return {"error": str(exc), "traceback": traceback.format_exc()}
+
+    @app.get("/debug/inspect-dom")
+    async def debug_inspect_dom() -> dict[str, Any]:
+        ts: str = time.strftime("%H:%M:%S")
+        print(f"[{ts}] DEBUG>> inspect DOM", flush=True)
+        try:
+            result: dict[str, Any] = {}
+            result["url"] = await manager._engine.get_current_url()
+            snippets: dict[str, str] = {}
+            queries = [
+                ("data-message-author-role", "[data-message-author-role]"),
+                ("main", "main"),
+                ("prose", "[class*='prose']"),
+                ("conversation", "[class*='conversation']"),
+                ("chat-container", "[class*='chat']"),
+                ("message-group", "div[class*='group']"),
+                ("article", "article"),
+            ]
+            for label, sel in queries:
+                try:
+                    html: str = await manager._engine.page.evaluate(
+                        "(s) => { const el = document.querySelector(s); return el ? el.outerHTML.substring(0, 1500) : null; }",
+                        sel,
+                    )
+                    if html:
+                        snippets[label] = html
+                except Exception:
+                    pass
+            result["elements"] = snippets
+            result["body_start"] = await manager._engine.page.evaluate(
+                "() => document.body.innerHTML.substring(0, 3000)"
+            )
+            return result
+        except Exception as exc:
+            return {"error": str(exc), "traceback": traceback.format_exc()}
+
+    @app.get("/debug/input")
+    async def debug_input() -> dict[str, Any]:
+        ts: str = time.strftime("%H:%M:%S")
+        print(f"[{ts}] DEBUG>> test input selectors", flush=True)
+        try:
+            result: dict[str, Any] = {}
+            result["url"] = await manager._engine.get_current_url()
+            page = manager._engine.page
+            result["input_selectors"] = {}
+            for sel in INPUT_SELECTORS:
+                try:
+                    el_count: int = await page.evaluate(
+                        "(s) => document.querySelectorAll(s).length", sel
+                    )
+                    if el_count > 0:
+                        html: str = await page.evaluate(
+                            "(s) => { const e = document.querySelector(s); return e ? e.outerHTML.substring(0, 800) : null; }",
+                            sel,
+                        )
+                        tag: str = await page.evaluate(
+                            "(s) => { const e = document.querySelector(s); return e ? e.tagName + '.' + (e.className || '') : null; }",
+                            sel,
+                        )
+                        placeholder: Optional[str] = await page.evaluate(
+                            "(s) => { const e = document.querySelector(s); return e ? (e.getAttribute('placeholder') || e.getAttribute('aria-label') || '') : null; }",
+                            sel,
+                        )
+                        visible: bool = await page.evaluate(
+                            "(s) => { const e = document.querySelector(s); if (!e) return false; const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; }",
+                            sel,
+                        )
+                        result["input_selectors"][sel] = {
+                            "count": el_count,
+                            "tag": tag,
+                            "html_preview": html[:400],
+                            "placeholder": placeholder,
+                            "visible": visible,
+                        }
+                except Exception as e:
+                    result["input_selectors"][sel] = {"error": str(e)}
+            result["send_selectors"] = {}
+            for sel in SEND_SELECTORS:
+                try:
+                    el_count = await page.evaluate(
+                        "(s) => document.querySelectorAll(s).length", sel
+                    )
+                    if el_count > 0:
+                        html = await page.evaluate(
+                            "(s) => { const e = document.querySelector(s); return e ? e.outerHTML.substring(0, 400) : null; }",
+                            sel,
+                        )
+                        result["send_selectors"][sel] = {
+                            "count": el_count,
+                            "html_preview": html,
+                        }
+                except Exception as e:
+                    result["send_selectors"][sel] = {"error": str(e)}
+            return result
+        except Exception as exc:
+            return {"error": str(exc), "traceback": traceback.format_exc()}
+
+    @app.get("/debug/buttons")
+    async def debug_buttons() -> dict[str, Any]:
+        ts: str = time.strftime("%H:%M:%S")
+        print(f"[{ts}] DEBUG>> list buttons", flush=True)
+        try:
+            buttons: list[dict[str, Any]] = await manager._engine.page.evaluate("""
+                () => Array.from(document.querySelectorAll('button')).slice(0, 30).map(b => ({
+                    tag: b.tagName,
+                    id: b.id,
+                    class: (b.className || '').substring(0, 120),
+                    text: (b.innerText || '').substring(0, 60),
+                    ariaLabel: b.getAttribute('aria-label') || '',
+                    dataTestid: b.getAttribute('data-testid') || '',
+                    type: b.getAttribute('type') || '',
+                    visible: b.offsetParent !== null,
+                    rect: (() => { const r = b.getBoundingClientRect(); return {w: r.width, h: r.height, top: r.top, left: r.left}; })(),
+                }))
+            """)
+            return {"url": await manager._engine.get_current_url(), "buttons": buttons}
+        except Exception as exc:
+            return {"error": str(exc), "traceback": traceback.format_exc()}
 
     @app.websocket("/ws")
     async def websocket_endpoint(ws: WebSocket) -> None:
@@ -249,7 +410,8 @@ def main() -> None:
     print(f"Grok Bridge Linux {ENGINE_VERSION} {args.host}:{args.port}", flush=True)
     print(
         "Endpoints: POST /chat, POST /agent, POST /new, GET /health, GET /history,"
-        " GET /sessions, POST /sessions/load, DELETE /sessions/{id}, WS /ws",
+        " GET /sessions, POST /sessions/load, DELETE /sessions/{id},"
+        " GET /debug/scrape, GET /debug/inspect-dom, GET /debug/input, GET /debug/buttons, WS /ws",
         flush=True,
     )
     print(

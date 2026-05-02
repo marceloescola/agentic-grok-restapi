@@ -65,6 +65,23 @@ class GrokClient:
         resp.raise_for_status()
         return resp.json()
 
+    async def list_sessions(self) -> list[dict[str, Any]]:
+        resp = await self._http.get(self._url("/sessions"))
+        resp.raise_for_status()
+        return resp.json()
+
+    async def load_session(self, session_id: int) -> dict[str, Any]:
+        resp = await self._http.post(
+            self._url("/sessions/load"), json={"id": session_id}
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    async def delete_session(self, session_id: int) -> dict[str, Any]:
+        resp = await self._http.delete(self._url(f"/sessions/{session_id}"))
+        resp.raise_for_status()
+        return resp.json()
+
     async def close(self) -> None:
         await self._http.aclose()
 

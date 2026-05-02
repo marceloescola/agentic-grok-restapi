@@ -19,11 +19,12 @@ import time
 from contextlib import asynccontextmanager
 from typing import Any, AsyncGenerator, Dict, List, Optional, Sequence
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from pydantic import BaseModel, Field
 import uvicorn
-
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from grok_engine_l import ENGINE_VERSION, EngineConfig, GrokEngineManager
+from pydantic import BaseModel, Field
+
+from db import SessionDB
 
 
 # Classes that will hold the model of chat request and agent request. Very good build the
@@ -56,7 +57,9 @@ def create_app(manager: GrokEngineManager) -> FastAPI:
         yield
         await manager.shutdown()
 
-    app: FastAPI = FastAPI(title="Grok Bridge Linux", version=ENGINE_VERSION, lifespan=lifespan)
+    app: FastAPI = FastAPI(
+        title="Grok Bridge Linux", version=ENGINE_VERSION, lifespan=lifespan
+    )
 
     @app.post("/chat")
     async def chat(req: ChatRequest) -> dict[str, Any]:
@@ -104,6 +107,29 @@ def create_app(manager: GrokEngineManager) -> FastAPI:
     async def history() -> dict[str, Any]:
         return await manager.history()
 
+    @app.get("/sessions")
+    async def list_sessions() -> list[dict[str, Any]]:
+        return await manager.list_sessions()
+
+    class LoadSessionRequest(BaseModel):
+        id: int
+
+    @app.post("/sessions/load")
+    async def load_session(req: LoadSessionRequest) -> dict[str, Any]:
+        ts: str = time.strftime("%H:%M:%S")
+        print(f"[{ts}] SES>> load session {req.id}", flush=True)
+        result: dict[str, Any] = await manager.load_session(req.id)
+        print(f"[{ts}] SES<< {result.get('status', 'error')}", flush=True)
+        return result
+
+    @app.delete("/sessions/{session_id}")
+    async def delete_session(session_id: int) -> dict[str, Any]:
+        ts: str = time.strftime("%H:%M:%S")
+        print(f"[{ts}] SES>> delete session {session_id}", flush=True)
+        result: dict[str, Any] = await manager.delete_session(session_id)
+        print(f"[{ts}] SES<< {result.get('status', 'error')}", flush=True)
+        return result
+
     @app.websocket("/ws")
     async def websocket_endpoint(ws: WebSocket) -> None:
         await ws.accept()
@@ -116,7 +142,9 @@ def create_app(manager: GrokEngineManager) -> FastAPI:
                 if msg_type == "prompt":
                     prompt: str = data.get("content", "")
                     if not prompt:
-                        await ws.send_json({"type": "error", "message": "content required"})
+                        await ws.send_json(
+                            {"type": "error", "message": "content required"}
+                        )
                         continue
 
                     mode: str = data.get("mode", "chat")
@@ -150,9 +178,13 @@ def create_app(manager: GrokEngineManager) -> FastAPI:
 
 
 def main() -> None:
-    parser: argparse.ArgumentParser = argparse.ArgumentParser(description="Linux Grok REST bridge")
+    parser: argparse.ArgumentParser = argparse.ArgumentParser(
+        description="Linux Grok REST bridge"
+    )
     parser.add_argument("--host", default=os.getenv("GROK_HOST", "0.0.0.0"))
-    parser.add_argument("--port", type=int, default=int(os.getenv("GROK_PORT", "19998")))
+    parser.add_argument(
+        "--port", type=int, default=int(os.getenv("GROK_PORT", "19998"))
+    )
     parser.add_argument(
         "--profile-dir",
         default=os.getenv("GROK_PROFILE_DIR", "~/.grok-bridge/firefox-profile"),
@@ -206,12 +238,18 @@ def main() -> None:
         profile_name=args.profile_name.strip() or "Default",
         project_url=args.project_url.strip() or None,
     )
-    manager: GrokEngineManager = GrokEngineManager(cfg=cfg, tool_server_url=args.tool_server_url)
+    db: SessionDB = SessionDB()
+    db.init_db()
+    manager: GrokEngineManager = GrokEngineManager(
+        cfg=cfg, tool_server_url=args.tool_server_url
+    )
+    manager.set_db(db)
     app: FastAPI = create_app(manager)
 
     print(f"Grok Bridge Linux {ENGINE_VERSION} {args.host}:{args.port}", flush=True)
     print(
-        "Endpoints: POST /chat, POST /agent, POST /new, GET /health, GET /history, WS /ws",
+        "Endpoints: POST /chat, POST /agent, POST /new, GET /health, GET /history,"
+        " GET /sessions, POST /sessions/load, DELETE /sessions/{id}, WS /ws",
         flush=True,
     )
     print(
@@ -219,7 +257,7 @@ def main() -> None:
         flush=True,
     )
     print(
-        "WS /ws accepts JSON: {\"type\":\"prompt\",\"content\":\"...\",\"mode\":\"chat|agent\"}",
+        'WS /ws accepts JSON: {"type":"prompt","content":"...","mode":"chat|agent"}',
         flush=True,
     )
 

@@ -11,6 +11,7 @@ from tui.screens.agent_screen import AgentScreen
 from tui.screens.main_screen import MainScreen
 from tui.screens.menu_screen import MenuScreen
 from tui.screens.settings_screen import SettingsScreen
+from tui.screens.session_screen import SessionScreen
 
 
 class GrokTUI(App):
@@ -40,6 +41,8 @@ class GrokTUI(App):
             return
         if action == "agent":
             self.push_screen(AgentScreen())
+        elif action == "sessions":
+            self.push_screen(SessionScreen())
         elif action == "settings":
             self.push_screen(SettingsScreen())
         elif action == "exit":

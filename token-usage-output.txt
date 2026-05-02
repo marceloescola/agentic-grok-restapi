@@ -1,0 +1,119 @@
+═══════════════════════════════════════════════════════════════════════════
+Token Analysis: Session ses_216ffc6a9ffeJ3bCJEbKvx471u
+Model: minimax-m2.5-free
+═══════════════════════════════════════════════════════════════════════════
+
+TOKEN BREAKDOWN BY CATEGORY
+─────────────────────────────────────────────────────────────────────────
+Estimated using tokenizer analysis of message content:
+
+Input Categories:
+  USER      ██████████████████████████████        100.0% (47)
+
+  Subtotal: 47 estimated input tokens
+
+Output Categories:
+  REASONING ██████████████████████████████        100.0% (58)
+
+  Subtotal: 58 estimated output tokens
+
+Local Total: 105 tokens (estimated)
+
+TOOL USAGE BREAKDOWN
+─────────────────────────────────────────────────────────────────────────
+
+TOP CONTRIBUTORS
+─────────────────────────────────────────────────────────────────────────
+• Reasoning#1                  58 tokens (55.2%)
+• User#1                       47 tokens (44.8%)
+
+═══════════════════════════════════════════════════════════════════════════
+MOST RECENT API CALL
+─────────────────────────────────────────────────────────────────────────
+
+Raw telemetry from last API response:
+  Input (fresh):              0 tokens
+  Cache read:                 0 tokens
+  Output:                     0 tokens
+  ─────────────────────────────────────
+  Total:                      0 tokens
+
+═══════════════════════════════════════════════════════════════════════════
+SESSION TOTALS (All 0 API calls)
+─────────────────────────────────────────────────────────────────────────
+
+Assistant messages observed: 1 (structural count)
+
+Total tokens processed across the entire session (for cost calculation):
+
+  Input tokens:               0 (fresh tokens across all calls)
+  Cache read:                 0 (cached tokens across all calls)
+  Cache write:                0 (tokens written to cache)
+  Output tokens:              0 (all model responses)
+  ─────────────────────────────────────
+  Session Total:              0 tokens (for billing)
+
+═══════════════════════════════════════════════════════════════════════════
+SESSION COST
+─────────────────────────────────────────────────────────────────────────
+
+Token usage breakdown:
+  Input tokens:               0
+  Output tokens:              0
+
+─────────────────────────────────────────────────────────────────────────
+ACTUAL COST (from API):  $0.0000
+
+Note: Actual cost from OpenCode includes provider-specific pricing
+and 200K+ context adjustments.
+
+══════════════════════════════════════════════════════════════════════════
+AVAILABLE SKILLS (always-available context)
+─────────────────────────────────────────────────────────────────────────
+
+These skills were recovered from the skill tool metadata available to this session.
+
+  Skill                  Description                                   Tokens
+  ───────────────────────────────────────────────────────────────────────
+  caveman                Ultra-compressed communication mode. Cuts to…    ~101
+  ───────────────────────────────────────────────────────────────────────
+  Total: ~101 tokens (1 skills available)
+
+  Note: Full skill tool description is ~665 tokens (includes boilerplate).
+
+═══════════════════════════════════════════════════════════════════════════
+AVAILABLE SUBAGENTS (in task tool definition)
+─────────────────────────────────────────────────────────────────────────
+
+These subagents are embedded in the task tool description and consume tokens on every API call.
+
+  Subagent               Description                                        Tokens
+  ───────────────────────────────────────────────────────────────────────
+  explore                Fast agent specialized for exploring codebases. U…    ~101
+  general                General-purpose agent for researching complex que…     ~28
+  ───────────────────────────────────────────────────────────────────────
+  Total: ~129 tokens (2 subagents available)
+
+  Note: Full task tool description is ~966 tokens (includes instructions/examples).
+
+═══════════════════════════════════════════════════════════════════════════
+TOOL DEFINITION COSTS (Estimated from argument analysis)
+─────────────────────────────────────────────────────────────────────────
+
+  Tool                Est. Tokens   Args   Complexity
+  ───────────────────────────────────────────────────────────────────
+  tokenscope                 ~280       0   simple
+  ───────────────────────────────────────────────────────────────────
+  Total:             ~        280 tokens (1 enabled tools)
+
+  Note: Estimates inferred from tool call arguments in this session.
+        Actual schema tokens may vary +/-20%.
+
+═══════════════════════════════════════════════════════════════════════════
+SUMMARY
+─────────────────────────────────────────────────────────────────────────
+
+                          Cost        Tokens          API Calls
+  Session:           $    0.0000             0             0
+
+═══════════════════════════════════════════════════════════════════════════

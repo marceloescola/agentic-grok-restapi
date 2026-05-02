@@ -13,6 +13,7 @@ class MenuScreen(Screen[Optional[str]]):
         with Container(id="menu-container"):
             yield Label("Menu", classes="menu-title")
             yield Button("Agent Mode", id="agent", variant="primary")
+            yield Button("Sessions", id="sessions")
             yield Button("Settings", id="settings")
             yield Button("Exit App", id="exit")
 

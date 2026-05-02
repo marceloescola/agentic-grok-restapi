@@ -18,4 +18,9 @@ dependencies = [
     "websockets>=16.0",
 ]
 
+[tool.pyright]
+venvPath = "."
+venv = ".venv"
+pythonVersion = "3.14"
+
 

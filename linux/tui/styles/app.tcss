@@ -176,3 +176,31 @@ Checkbox {
 #s-websocket {
     margin: 0 1;
 }
+
+/* Session screen */
+#session-list {
+    height: 1fr;
+    border: solid $primary;
+    margin: 0 1;
+}
+
+#session-list ListItem {
+    padding: 0 1;
+}
+
+#session-list ListItem > Label {
+    padding: 0;
+}
+
+#session-buttons {
+    height: 3;
+    margin: 0 1;
+    align: center middle;
+}
+
+#session-status {
+    height: 1;
+    background: $panel;
+    color: $text-muted;
+    padding: 0 1;
+}

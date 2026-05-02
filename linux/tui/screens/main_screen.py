@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from typing import Dict, Any
+from typing import Any, Dict, List, Optional
 
 from textual.containers import Horizontal
 from textual.screen import Screen
 from textual.widgets import Button, Header, Footer, Input, RichLog, Static
 
 from tui.client import GrokWSClient
+from tui.screens.session_screen import SessionScreen
 
 
 class MainScreen(Screen):
@@ -29,6 +30,7 @@ class MainScreen(Screen):
         yield Horizontal(
             Button("Send", id="send-btn", variant="primary"),
             Button("New", id="new-btn"),
+            Button("Sessions", id="sessions-btn"),
             Button("Health", id="health-btn"),
             Button("History", id="history-btn"),
             Button("Menu", id="menu-btn"),
@@ -93,6 +95,8 @@ class MainScreen(Screen):
             await self._new_conversation()
         elif btn_id == "health-btn":
             await self._check_health()
+        elif btn_id == "sessions-btn":
+            await self._show_sessions()
         elif btn_id == "history-btn":
             await self._fetch_history()
         elif btn_id == "menu-btn":
@@ -266,3 +270,35 @@ class MainScreen(Screen):
         except Exception as e:
             self._log(f"\n[bold red]Connection error:[/bold red] {e}")
             self._update_status("[red]Connection failed[/red]")
+
+    async def _show_sessions(self) -> None:
+        result: Optional[Dict[str, Any]] = await self.app.push_screen_wait(
+            SessionScreen()
+        )
+        if result is None:
+            return
+        session: Dict[str, Any] = result.get("session", {})
+        messages: List[Dict[str, str]] = result.get("messages", [])
+        if not messages:
+            self._log(
+                f"[bold yellow]Session:[/bold yellow] {session.get('name', '?')}"
+            )
+            self._log("[dim]No messages in this session[/dim]")
+            return
+        chat_log = self.query_one("#chat-log", RichLog)
+        chat_log.clear()
+        self._log(
+            f"[bold yellow]--- Loaded session: {session.get('name', '?')} ---[/bold yellow]"
+        )
+        for msg in messages:
+            role: str = msg.get("role", "?")
+            content: str = msg.get("content", "")
+            if role == "user":
+                self._log(f"\n[bold cyan]You:[/bold cyan] {content}")
+            elif role == "assistant":
+                self._log(f"\n[bold green]Grok:[/bold green] {content}")
+            else:
+                self._log(f"\n[{role}] {content}")
+        self._update_status(
+            f"[green]Session loaded[/green] ({len(messages)} messages)"
+        )

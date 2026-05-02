@@ -7,6 +7,7 @@ Playwright + Chromium (async API for use with FastAPI/Uvicorn).
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import random
 import re
@@ -15,6 +16,9 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, AsyncGenerator, Dict, List, Optional, Sequence
+
+from db import SessionDB
+from session_model import MessageInfo, SessionInfo
 
 GROK_URL: str = "https://grok.com/"
 ENGINE_VERSION: str = "v3-linux-playwright-chromium"
@@ -164,6 +168,73 @@ GET_RESPONSE_VIA_DOM_JS: str = """
       const t = els[els.length - 1].innerText;
       if (t && t.trim().length > 0) return t;
     }
+  }
+  return null;
+}
+"""
+
+SCRAPE_MESSAGES_JS: str = """
+() => {
+  const messages = [];
+  const seen = new Set();
+  const selectors = [
+    '[data-message-author-role="user"]',
+    '[data-message-author-role="assistant"]',
+  ];
+  for (const sel of selectors) {
+    const els = document.querySelectorAll(sel);
+    if (els.length > 0) {
+      let found = false;
+      els.forEach(el => {
+        const text = el.innerText.trim();
+        if (text && !seen.has(text)) {
+          seen.add(text);
+          messages.push({
+            role: el.getAttribute('data-message-author-role') || 'user',
+            content: text,
+          });
+          found = true;
+        }
+      });
+      if (found) return JSON.stringify(messages);
+    }
+  }
+  const container = document.querySelector('div.relative.flex.w-full.flex-col.items-center');
+  if (container) {
+    const chatEls = container.querySelectorAll('[data-message-author-role]');
+    chatEls.forEach(el => {
+      const text = el.innerText.trim();
+      if (text && !seen.has(text)) {
+        seen.add(text);
+        messages.push({
+          role: el.getAttribute('data-message-author-role') || 'user',
+          content: text,
+        });
+      }
+    });
+  }
+  return JSON.stringify(messages.length > 0 ? messages : null);
+}
+"""
+
+SESSION_NAME_JS: str = """
+() => {
+  const patterns = [
+    'button[data-state="active"] span.flex-1.select-none',
+    'a[data-state="active"] span.flex-1.select-none',
+    '[aria-current="page"] span.flex-1.select-none',
+    '[data-sidebar-item][data-active="true"] span.flex-1',
+    'button[data-state="active"] span.flex-1',
+    'a[data-state="active"] span.flex-1',
+    '[data-sidebar-item] span.flex-1.select-none',
+  ];
+  for (const sel of patterns) {
+    const el = document.querySelector(sel);
+    if (el && el.textContent.trim()) return el.textContent.trim();
+  }
+  const all = document.querySelectorAll('span.flex-1.select-none');
+  for (const span of all) {
+    if (span.textContent.trim() && span.offsetParent !== null) return span.textContent.trim();
   }
   return null;
 }
@@ -405,6 +476,38 @@ class GrokPlaywrightEngine:
         try:
             result: Any = await self.page.evaluate(GET_RESPONSE_VIA_DOM_JS)
             return str(result) if result else None
+        except Exception:
+            return None
+
+    async def get_current_url(self) -> str:
+        if self.page is None:
+            return ""
+        try:
+            return str(self.page.url or "")
+        except Exception:
+            return ""
+
+    async def scrape_messages(self) -> Optional[List[Dict[str, str]]]:
+        if self.page is None:
+            return None
+        try:
+            raw: Any = await self.page.evaluate(SCRAPE_MESSAGES_JS)
+            if not raw:
+                return None
+            parsed: Any = json.loads(str(raw))
+            if not isinstance(parsed, list) or len(parsed) == 0:
+                return None
+            return parsed
+        except Exception:
+            return None
+
+    async def scrape_session_name(self) -> Optional[str]:
+        if self.page is None:
+            return None
+        try:
+            raw: Any = await self.page.evaluate(SESSION_NAME_JS)
+            name: str = str(raw).strip() if raw else ""
+            return name if name else None
         except Exception:
             return None
 
@@ -867,12 +970,60 @@ class GrokEngineManager:
         self.cfg: EngineConfig = cfg
         self._engine: GrokPlaywrightEngine = GrokPlaywrightEngine(cfg)
         self._tool_server_url: str = tool_server_url
+        self._db: Optional["SessionDB"] = None
+        self._last_session_url: str = ""
+        self._last_prompt: str = ""
+
+    def set_db(self, db: "SessionDB") -> None:
+        self._db = db
 
     async def warmup(self) -> None:
         await self._engine.start()
 
     async def shutdown(self) -> None:
+        self._db = None
         await self._engine.stop()
+
+    async def _maybe_save_session(self, prompt: str) -> Optional[Dict[str, Any]]:
+        db = self._db
+        if db is None:
+            return None
+        url: str = await self._engine.get_current_url()
+        if not url or "grok.com/chat/" not in url:
+            return None
+        if url == self._last_session_url:
+            return None
+        self._last_session_url = url
+        name: str = prompt[:60]
+        session: SessionInfo = db.add_session(name=name, url=url)
+        name_from_sidebar: Optional[str] = await self._engine.scrape_session_name()
+        if name_from_sidebar:
+            db.update_session_name(session.id, name_from_sidebar)
+        else:
+            async def _retry_name(sid: int, fallback: str) -> None:
+                await _async_sleep(10)
+                try:
+                    sidebar_name: Optional[str] = await self._engine.scrape_session_name()
+                    if sidebar_name:
+                        if db.conn is not None:
+                            db.update_session_name(sid, sidebar_name)
+                    else:
+                        if db.conn is not None:
+                            db.update_session_name(sid, fallback)
+                except Exception:
+                    if db.conn is not None:
+                        db.update_session_name(sid, fallback)
+            asyncio.ensure_future(_retry_name(session.id, name))
+        messages_data: Optional[List[Dict[str, str]]] = await self._engine.scrape_messages()
+        if messages_data:
+            msgs: List["MessageInfo"] = [
+                MessageInfo(role=m["role"], content=m["content"])
+                for m in messages_data
+                if m.get("role") and m.get("content")
+            ]
+            if msgs:
+                db.save_messages(session.id, msgs)
+        return {"session_id": session.id, "session_url": url, "session_name": session.name}
 
     async def chat(
         self,
@@ -890,6 +1041,9 @@ class GrokEngineManager:
         try:
             result: Dict[str, Any] = await self._engine.chat(prompt=prompt, timeout=timeout, files=files)
             result["engine"] = self._engine.name
+            session_info: Optional[Dict[str, Any]] = await self._maybe_save_session(prompt)
+            if session_info:
+                result["session"] = session_info
             return result
         except Exception as exc:
             return {"status": "error", "error": str(exc)}
@@ -908,6 +1062,88 @@ class GrokEngineManager:
             return result
         except Exception as exc:
             return {"status": "error", "error": str(exc)}
+
+    async def list_sessions(self) -> List[Dict[str, Any]]:
+        db = self._db
+        if db is None:
+            return []
+        return [
+            {
+                "id": s.id,
+                "name": s.name,
+                "url": s.url,
+                "created_at": s.created_at,
+                "updated_at": s.updated_at,
+            }
+            for s in db.list_sessions()
+        ]
+
+    async def load_session(self, session_id: int) -> Dict[str, Any]:
+        db = self._db
+        if db is None:
+            return {"status": "error", "error": "database not initialized"}
+        session: Optional[SessionInfo] = db.get_session(session_id)
+        if session is None:
+            return {"status": "error", "error": "session not found"}
+        try:
+            await self._engine.start()
+            await self._engine.ensure_grok()
+            cur_url: str = await self._engine.get_current_url()
+            if cur_url != session.url:
+                await self._engine.page.goto(
+                    session.url,
+                    wait_until="domcontentloaded",
+                    timeout=self.cfg.page_timeout_seconds * 1000,
+                )
+                await _async_sleep(1.0)
+            messages_data: Optional[List[Dict[str, str]]] = await self._engine.scrape_messages()
+            if messages_data:
+                msgs: List["MessageInfo"] = [
+                    MessageInfo(role=m["role"], content=m["content"])
+                    for m in messages_data
+                    if m.get("role") and m.get("content")
+                ]
+                if msgs:
+                    db.save_messages(session.id, msgs)
+            cached: List["MessageInfo"] = db.get_messages(session_id)
+            return {
+                "status": "ok",
+                "session": {
+                    "id": session.id,
+                    "name": session.name,
+                    "url": session.url,
+                    "created_at": session.created_at,
+                    "updated_at": session.updated_at,
+                },
+                "messages": [
+                    {"role": m.role, "content": m.content} for m in (cached or [])
+                ],
+            }
+        except Exception as exc:
+            cached = db.get_messages(session_id)
+            if cached:
+                return {
+                    "status": "ok",
+                    "session": {
+                        "id": session.id,
+                        "name": session.name,
+                        "url": session.url,
+                        "created_at": session.created_at,
+                        "updated_at": session.updated_at,
+                    },
+                    "messages": [
+                        {"role": m.role, "content": m.content} for m in cached
+                    ],
+                    "_note": "loaded from cache (scrape failed)",
+                }
+            return {"status": "error", "error": str(exc)}
+
+    async def delete_session(self, session_id: int) -> Dict[str, Any]:
+        db = self._db
+        if db is None:
+            return {"status": "error", "error": "database not initialized"}
+        ok: bool = db.delete_session(session_id)
+        return {"status": "ok" if ok else "error", "deleted": ok}
 
     async def health(self) -> Dict[str, Any]:
         availability: Dict[str, bool] = {

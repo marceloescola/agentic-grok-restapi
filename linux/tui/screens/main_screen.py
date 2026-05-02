@@ -96,7 +96,7 @@ class MainScreen(Screen):
         elif btn_id == "health-btn":
             await self._check_health()
         elif btn_id == "sessions-btn":
-            await self._show_sessions()
+            self._show_sessions()
         elif btn_id == "history-btn":
             await self._fetch_history()
         elif btn_id == "menu-btn":
@@ -271,10 +271,10 @@ class MainScreen(Screen):
             self._log(f"\n[bold red]Connection error:[/bold red] {e}")
             self._update_status("[red]Connection failed[/red]")
 
-    async def _show_sessions(self) -> None:
-        result: Optional[Dict[str, Any]] = await self.app.push_screen_wait(
-            SessionScreen()
-        )
+    def _show_sessions(self) -> None:
+        self.app.push_screen(SessionScreen(), self._on_session_result)
+
+    def _on_session_result(self, result: Optional[Dict[str, Any]]) -> None:
         if result is None:
             return
         session: Dict[str, Any] = result.get("session", {})

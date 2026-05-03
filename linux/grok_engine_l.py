@@ -41,7 +41,7 @@ SEND_SELECTORS: List[str] = [
 
 FILE_INPUT_SELECTORS: List[str] = [
     'input[type="file"]',
-    'input[accept]',
+    "input[accept]",
     '[data-testid*="file"] input[type="file"]',
 ]
 
@@ -271,6 +271,7 @@ class GrokPlaywrightEngine:
     def available() -> bool:
         try:
             import playwright  # noqa: F401
+
             return True
         except Exception:
             return False
@@ -305,7 +306,10 @@ class GrokPlaywrightEngine:
 
         if self.cfg.user_data_dir:
             resolved: Path = Path(self.cfg.user_data_dir).expanduser().resolve()
-            if not (resolved / "Local State").is_file() and not (resolved / "First Run").is_file():
+            if (
+                not (resolved / "Local State").is_file()
+                and not (resolved / "First Run").is_file()
+            ):
                 raise EngineRuntimeError(
                     f"chromium user data dir not found or invalid: {resolved}\n"
                     f"  Set to the parent of 'Default/' (e.g. ~/.config/chromium)"
@@ -327,12 +331,18 @@ class GrokPlaywrightEngine:
             self.context = await self._playwright.chromium.launch_persistent_context(
                 **launch_kwargs,
             )
-            self.page = self.context.pages[0] if self.context.pages else await self.context.new_page()
+            self.page = (
+                self.context.pages[0]
+                if self.context.pages
+                else await self.context.new_page()
+            )
             self.page.set_default_timeout(self.cfg.page_timeout_seconds * 1000)
             await self.page.add_init_script(STEALTH_JS)
         except Exception as exc:
             await self.stop()
-            raise EngineRuntimeError(f"failed to start playwright firefox: {exc}") from exc
+            raise EngineRuntimeError(
+                f"failed to start playwright firefox: {exc}"
+            ) from exc
 
     async def stop(self) -> None:
         if self.context is not None:
@@ -424,7 +434,9 @@ class GrokPlaywrightEngine:
         try:
             await input_el.set_input_files(file_paths)
         except Exception as exc:
-            raise EngineRuntimeError(f"failed to attach files via playwright: {exc}") from exc
+            raise EngineRuntimeError(
+                f"failed to attach files via playwright: {exc}"
+            ) from exc
 
         await self._sleep_jitter(0.3, 0.35)
 
@@ -434,12 +446,16 @@ class GrokPlaywrightEngine:
 
         await _async_sleep(random.uniform(0.1, 0.5))
 
-        result: Any = await self.page.evaluate(INSERT_TEXT_JS, {"selector": input_selector, "text": prompt})
+        result: Any = await self.page.evaluate(
+            INSERT_TEXT_JS, {"selector": input_selector, "text": prompt}
+        )
         if "OK" not in str(result):
             try:
                 await self.page.fill(input_selector, prompt)
             except Exception as exc:
-                raise EngineRuntimeError(f"failed to type prompt in playwright: {exc}") from exc
+                raise EngineRuntimeError(
+                    f"failed to type prompt in playwright: {exc}"
+                ) from exc
 
         await self._sleep_jitter(0.2, 0.3)
 
@@ -454,7 +470,11 @@ class GrokPlaywrightEngine:
 
         for button in buttons:
             try:
-                text: str = (await button.inner_text() or "") + " " + (await button.get_attribute("aria-label") or "")
+                text: str = (
+                    (await button.inner_text() or "")
+                    + " "
+                    + (await button.get_attribute("aria-label") or "")
+                )
                 if SEND_TEXT_PATTERN.search(text):
                     await button.click(timeout=1200)
                     return
@@ -464,10 +484,14 @@ class GrokPlaywrightEngine:
         try:
             element: Any = await self.page.query_selector(input_selector)
             if element is None:
-                raise EngineRuntimeError("input selector not found before Enter fallback")
+                raise EngineRuntimeError(
+                    "input selector not found before Enter fallback"
+                )
             await element.press("Enter")
         except Exception as exc:
-            raise EngineRuntimeError(f"failed to submit prompt in playwright: {exc}") from exc
+            raise EngineRuntimeError(
+                f"failed to submit prompt in playwright: {exc}"
+            ) from exc
 
     async def _get_body(self) -> str:
         if self.page is None:
@@ -537,7 +561,9 @@ class GrokPlaywrightEngine:
                     timeout=self.cfg.page_timeout_seconds * 1000,
                 )
             except Exception as exc:
-                raise EngineRuntimeError(f"failed to navigate to grok.com: {exc}") from exc
+                raise EngineRuntimeError(
+                    f"failed to navigate to grok.com: {exc}"
+                ) from exc
 
             await self._sleep_jitter(0.5, 1.0)
 
@@ -551,7 +577,9 @@ class GrokPlaywrightEngine:
         assert self.page is not None
 
         self._agentic_mode = agentic
-        target: str = self.cfg.project_url if (agentic and self.cfg.project_url) else GROK_URL
+        target: str = (
+            self.cfg.project_url if (agentic and self.cfg.project_url) else GROK_URL
+        )
 
         try:
             await self.page.goto(
@@ -568,7 +596,9 @@ class GrokPlaywrightEngine:
         if not selector:
             raise EngineRuntimeError("input not found after opening new conversation")
 
-    async def chat(self, prompt: str, timeout: int, files: Optional[Sequence[str]] = None) -> Dict[str, Any]:
+    async def chat(
+        self, prompt: str, timeout: int, files: Optional[Sequence[str]] = None
+    ) -> Dict[str, Any]:
         input_selector: str = await self.ensure_grok()
         body_before: str = await self._get_body()
         initial_len: int = len(body_before)
@@ -644,7 +674,9 @@ class GrokPlaywrightEngine:
         if reuse_page:
             await self.start()
             assert self.page is not None
-            input_selector: Optional[str] = await self._find_input_selector(timeout_seconds=25)
+            input_selector: Optional[str] = await self._find_input_selector(
+                timeout_seconds=25
+            )
             if not input_selector:
                 raise EngineRuntimeError("input not found")
         else:
@@ -748,7 +780,9 @@ class GrokPlaywrightEngine:
         if reuse_page:
             await self.start()
             assert self.page is not None
-            input_selector: Optional[str] = await self._find_input_selector(timeout_seconds=25)
+            input_selector: Optional[str] = await self._find_input_selector(
+                timeout_seconds=25
+            )
             if not input_selector:
                 raise EngineRuntimeError("input not found")
         else:
@@ -914,7 +948,9 @@ class GrokPlaywrightEngine:
             pass
 
     @staticmethod
-    async def _sleep_jitter(base_seconds: float = 0.08, max_extra_seconds: float = 0.24) -> None:
+    async def _sleep_jitter(
+        base_seconds: float = 0.08, max_extra_seconds: float = 0.24
+    ) -> None:
         await _async_sleep(base_seconds + random.uniform(0.0, max_extra_seconds))
 
     INTERMEDIATE_PATTERNS: List[str] = [
@@ -924,16 +960,7 @@ class GrokPlaywrightEngine:
         "Gesucht im Web",
         "Cercato sul web",
         "Buscado en la web",
-        "results",
-        "Tool worked",
-        "Tool call",
-        "Calling tool",
-        "Using tool",
-        "Searching for",
-        "Searching the web",
-        "Browsing the web",
-        "Reading",
-        "Scraping",
+        "Thinking about",
     ]
 
     @staticmethod
@@ -975,11 +1002,17 @@ class GrokPlaywrightEngine:
         # Strip naked timing: " • 2s" or "• 2s" in the middle of text
         text = re.sub(r"\s*•\s*\d+(\.\d+)?[ms]?\n?", "\n", text)
         # Generic "Thinking..." / "Evaluating..." headings
-        text = re.sub(r"(?m)^(Thinking|Evaluating|Calculating|Analyzing|Searching|Looking up).*\n?", "", text)
+        text = re.sub(
+            r"(?m)^(Thinking|Evaluating|Calculating|Analyzing|Searching|Looking up).*\n?",
+            "",
+            text,
+        )
         # Strip "Detecting..." jailbreak warnings
         text = re.sub(r"(?m)^Detecting.*\n?", "", text)
         text = re.sub(r"\n[0-9]+(\.[0-9]+)?s\n", "\n", text)
-        text = re.sub(r"\n(Share|Compare|Make it|Explain|Toggle|Like|Dislike).*", "", text)
+        text = re.sub(
+            r"\n(Share|Compare|Make it|Explain|Toggle|Like|Dislike).*", "", text
+        )
         # Strip "Searched web" / "N results" lines
         text = re.sub(r"(?m)^Searched web.*\n?", "", text)
         text = re.sub(r"(?m)^\d+\s*results?\n?", "", text)
@@ -1027,7 +1060,9 @@ async def _async_sleep(seconds: float) -> None:
 class GrokEngineManager:
     """Thin async wrapper around the single Playwright engine."""
 
-    def __init__(self, cfg: EngineConfig, tool_server_url: str = "http://localhost:19997") -> None:
+    def __init__(
+        self, cfg: EngineConfig, tool_server_url: str = "http://localhost:19997"
+    ) -> None:
         self.cfg: EngineConfig = cfg
         self._engine: GrokPlaywrightEngine = GrokPlaywrightEngine(cfg)
         self._tool_server_url: str = tool_server_url
@@ -1061,10 +1096,13 @@ class GrokEngineManager:
         if name_from_sidebar:
             db.update_session_name(session.id, name_from_sidebar)
         else:
+
             async def _retry_name(sid: int, fallback: str) -> None:
                 await _async_sleep(10)
                 try:
-                    sidebar_name: Optional[str] = await self._engine.scrape_session_name()
+                    sidebar_name: Optional[
+                        str
+                    ] = await self._engine.scrape_session_name()
                     if sidebar_name:
                         if db.conn is not None:
                             db.update_session_name(sid, sidebar_name)
@@ -1074,8 +1112,11 @@ class GrokEngineManager:
                 except Exception:
                     if db.conn is not None:
                         db.update_session_name(sid, fallback)
+
             asyncio.ensure_future(_retry_name(session.id, name))
-        messages_data: Optional[List[Dict[str, str]]] = await self._engine.scrape_messages()
+        messages_data: Optional[
+            List[Dict[str, str]]
+        ] = await self._engine.scrape_messages()
         if messages_data:
             msgs: List["MessageInfo"] = [
                 MessageInfo(role=m["role"], content=m["content"])
@@ -1084,7 +1125,11 @@ class GrokEngineManager:
             ]
             if msgs:
                 db.save_messages(session.id, msgs)
-        return {"session_id": session.id, "session_url": url, "session_name": session.name}
+        return {
+            "session_id": session.id,
+            "session_url": url,
+            "session_name": session.name,
+        }
 
     async def chat(
         self,
@@ -1100,9 +1145,13 @@ class GrokEngineManager:
             timeout = 5
 
         try:
-            result: Dict[str, Any] = await self._engine.chat(prompt=prompt, timeout=timeout, files=files)
+            result: Dict[str, Any] = await self._engine.chat(
+                prompt=prompt, timeout=timeout, files=files
+            )
             result["engine"] = self._engine.name
-            session_info: Optional[Dict[str, Any]] = await self._maybe_save_session(prompt)
+            session_info: Optional[Dict[str, Any]] = await self._maybe_save_session(
+                prompt
+            )
             if session_info:
                 result["session"] = session_info
             return result
@@ -1157,7 +1206,9 @@ class GrokEngineManager:
                     timeout=self.cfg.page_timeout_seconds * 1000,
                 )
                 await _async_sleep(1.0)
-            messages_data: Optional[List[Dict[str, str]]] = await self._engine.scrape_messages()
+            messages_data: Optional[
+                List[Dict[str, str]]
+            ] = await self._engine.scrape_messages()
             if messages_data:
                 msgs: List["MessageInfo"] = [
                     MessageInfo(role=m["role"], content=m["content"])
@@ -1241,6 +1292,12 @@ class GrokEngineManager:
                 max_steps=max_steps,
             )
             result["engine"] = self._engine.name
+            try:
+                sess: Optional[Dict[str, Any]] = await self._maybe_save_session(prompt)
+                if sess:
+                    result["session"] = sess
+            except Exception:
+                pass
             return result
         except Exception as exc:
             return {"status": "error", "error": str(exc)}
@@ -1253,7 +1310,9 @@ class GrokEngineManager:
     ) -> AsyncGenerator[Dict[str, Any], None]:
         last_event: Optional[Dict[str, Any]] = None
         async for event in self._engine.watch_response(
-            prompt=prompt, timeout=timeout, files=files,
+            prompt=prompt,
+            timeout=timeout,
+            files=files,
         ):
             last_event = event
             yield event

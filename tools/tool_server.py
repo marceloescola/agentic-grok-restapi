@@ -17,6 +17,7 @@ if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import uvicorn
 
@@ -40,6 +41,14 @@ class ToolRunRequest(BaseModel):
 
 def create_app() -> FastAPI:
     app = FastAPI(title="Grok Tool Server", version="0.1.0")
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
     @app.post("/tools/run")
     async def run_tool(req: ToolRunRequest) -> Dict[str, str]:

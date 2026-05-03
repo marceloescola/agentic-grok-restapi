@@ -160,6 +160,13 @@ Checkbox {
     margin: 0 2;
 }
 
+/* Agent session button bar */
+#agent-session-bar {
+    height: 3;
+    margin: 0 1;
+    align: center middle;
+}
+
 /* File picker */
 #file-tree {
     height: 1fr;

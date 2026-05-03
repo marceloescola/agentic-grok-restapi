@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      font-size: 13px;
+      width: 480px;
+      max-height: 500px;
+      overflow: hidden;
+      background: #1a1a2e;
+      color: #e0e0e0;
+    }
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 12px;
+      background: #16213e;
+      border-bottom: 1px solid #0f3460;
+    }
+    h1 { font-size: 14px; font-weight: 600; }
+    .controls { display: flex; gap: 6px; align-items: center; }
+    .controls button {
+      padding: 4px 10px;
+      border: 1px solid #0f3460;
+      border-radius: 4px;
+      background: #0f3460;
+      color: #e0e0e0;
+      cursor: pointer;
+      font-size: 12px;
+    }
+    .controls button:hover { background: #1a5276; }
+    .controls button.danger:hover { background: #6b2020; }
+    #toggleBtn.active { background: #27ae60; border-color: #27ae60; }
+    #toggleBtn.inactive { background: #7f8c8d; border-color: #7f8c8d; }
+    .stats {
+      display: flex;
+      gap: 16px;
+      padding: 6px 12px;
+      font-size: 11px;
+      color: #888;
+      border-bottom: 1px solid #0f3460;
+    }
+    #logContainer {
+      overflow-y: auto;
+      max-height: 380px;
+      padding: 4px 8px;
+    }
+    .log-entry {
+      padding: 4px 6px;
+      border-bottom: 1px solid #0f3460;
+      font-size: 11px;
+      line-height: 1.4;
+    }
+    .log-entry .time { color: #666; margin-right: 6px; }
+    .log-entry .msg { color: #bdc3c7; }
+    .log-entry .data {
+      display: block;
+      margin-top: 2px;
+      padding: 3px 6px;
+      background: #0f346033;
+      border-radius: 3px;
+      font-family: monospace;
+      font-size: 10px;
+      color: #95a5a6;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+    .log-entry.executing { border-left: 3px solid #f39c12; }
+    .log-entry.result   { border-left: 3px solid #27ae60; }
+    .log-entry.error    { border-left: 3px solid #e74c3c; }
+    .empty { padding: 20px; text-align: center; color: #555; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Grok Tool Bridge</h1>
+    <div class="controls">
+      <button id="scanBtn">Scan now</button>
+      <button id="resetBtn" class="danger">Reset</button>
+      <button id="toggleBtn" class="active">Active</button>
+    </div>
+  </header>
+  <div class="stats">
+    <span id="callCount">0 calls</span>
+    <span id="toolStatus">tool server: checking...</span>
+  </div>
+  <div id="logContainer">
+    <div class="empty">Waiting for tool calls...</div>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>

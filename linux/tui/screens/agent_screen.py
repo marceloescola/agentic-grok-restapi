@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Set
+from typing import Any, Dict, List, Optional, Set
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, ScrollableContainer
@@ -17,6 +17,7 @@ from textual.widgets import (
 
 from tui.client import GrokWSClient
 from tui.screens.file_picker import FilePicker
+from tui.screens.session_screen import SessionScreen
 
 
 class AgentScreen(Screen):
@@ -57,6 +58,10 @@ class AgentScreen(Screen):
             Button("Back", id="back-btn"),
             id="agent-input-bar",
         )
+        yield Horizontal(
+            Button("Sessions", id="agent-sessions-btn"),
+            id="agent-session-bar",
+        )
         yield Static(id="agent-status")
         yield Footer()
 
@@ -92,6 +97,8 @@ class AgentScreen(Screen):
             self._toggle_tool(btn_id)
         elif btn_id == "browse-btn":
             await self._browse_file()
+        elif btn_id == "agent-sessions-btn":
+            self._show_sessions()
 
     async def _browse_file(self) -> None:
         self.app.push_screen(FilePicker(), self._on_file_picked)
@@ -99,6 +106,36 @@ class AgentScreen(Screen):
     def _on_file_picked(self, path: str | None) -> None:
         if path:
             self.query_one("#file-path", Input).value = path
+
+    def _show_sessions(self) -> None:
+        self.app.push_screen(SessionScreen(), self._on_session_result)
+
+    def _on_session_result(self, result: Optional[Dict[str, Any]]) -> None:
+        if result is None:
+            return
+        session: Dict[str, Any] = result.get("session", {})
+        messages: List[Dict[str, str]] = result.get("messages", [])
+        if not messages:
+            self._log(
+                f"[bold yellow]Session:[/bold yellow] {session.get('name', '?')}"
+            )
+            return
+        output = self.query_one("#agent-output", RichLog)
+        output.clear()
+        self._log(
+            f"[bold yellow]--- Loaded session: {session.get('name', '?')} ---[/bold yellow]"
+        )
+        for msg in messages:
+            role: str = msg.get("role", "?")
+            content: str = msg.get("content", "")
+            if role == "user":
+                self._log(f"\n[bold cyan]You:[/bold cyan] {content}")
+            else:
+                self._log(f"\n[bold green]Grok:[/bold green] {content}")
+        self._update_status(
+            f"[green]Session loaded[/green] ({len(messages)} messages)"
+        )
+        self.query_one("#agent-prompt", Input).focus()
 
     def _log(self, text: str) -> None:
         self.query_one("#agent-output", RichLog).write(text)

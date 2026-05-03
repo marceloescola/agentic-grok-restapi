@@ -1,0 +1,39 @@
+{
+  "manifest_version": 2,
+  "name": "Grok Tool Bridge",
+  "version": "0.1.0",
+  "description": "Intercepts TOOL_CALL from grok.com responses, executes tools via local tool server, and injects results back.",
+  "homepage_url": "https://github.com/anomalyco/agentic-grok-restapi",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "grok-tool-bridge@anomalyco.dev"
+    }
+  },
+  "permissions": [
+    "storage",
+    "http://localhost:19997/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["https://grok.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "background": {
+    "scripts": ["background.js"],
+    "persistent": false
+  },
+  "browser_action": {
+    "default_popup": "popup.html",
+    "default_title": "Grok Tool Bridge",
+    "default_icon": {
+      "48": "icons/icon-48.svg",
+      "96": "icons/icon-96.svg"
+    }
+  },
+  "icons": {
+    "48": "icons/icon-48.svg",
+    "96": "icons/icon-96.svg"
+  }
+}

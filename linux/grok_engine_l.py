@@ -1061,26 +1061,39 @@ class GrokEngineManager:
     """Thin async wrapper around the single Playwright engine."""
 
     def __init__(
-        self, cfg: EngineConfig, tool_server_url: str = "http://localhost:19997"
+        self,
+        cfg: EngineConfig,
+        tool_server_url: str = "http://localhost:19997",
+        extension_only: bool = False,
     ) -> None:
         self.cfg: EngineConfig = cfg
-        self._engine: GrokPlaywrightEngine = GrokPlaywrightEngine(cfg)
+        self._extension_only: bool = extension_only
+        self._engine: GrokPlaywrightEngine | None = (
+            None if extension_only else GrokPlaywrightEngine(cfg)
+        )
         self._tool_server_url: str = tool_server_url
         self._db: Optional["SessionDB"] = None
         self._last_session_url: str = ""
         self._last_prompt: str = ""
 
+    def _no_engine_err(self) -> Dict[str, Any]:
+        return {"status": "error", "error": "browser not available (extension-only mode)"}
+
     def set_db(self, db: "SessionDB") -> None:
         self._db = db
 
     async def warmup(self) -> None:
-        await self._engine.start()
+        if self._engine is not None:
+            await self._engine.start()
 
     async def shutdown(self) -> None:
         self._db = None
-        await self._engine.stop()
+        if self._engine is not None:
+            await self._engine.stop()
 
     async def _maybe_save_session(self, prompt: str) -> Optional[Dict[str, Any]]:
+        if self._engine is None:
+            return None
         db = self._db
         if db is None:
             return None
@@ -1137,6 +1150,8 @@ class GrokEngineManager:
         timeout: int = 120,
         files: Optional[Sequence[str]] = None,
     ) -> Dict[str, Any]:
+        if self._engine is None:
+            return self._no_engine_err()
         if not (prompt or "").strip():
             return {"status": "error", "error": "prompt is required"}
 
@@ -1159,6 +1174,8 @@ class GrokEngineManager:
             return {"status": "error", "error": str(exc)}
 
     async def new_conversation(self, agentic: bool = False) -> Dict[str, Any]:
+        if self._engine is None:
+            return {"status": "ok", "engine": "extension-only"}
         try:
             await self._engine.new_conversation(agentic=agentic)
             return {"status": "ok", "engine": self._engine.name}
@@ -1166,6 +1183,8 @@ class GrokEngineManager:
             return {"status": "error", "error": str(exc)}
 
     async def history(self) -> Dict[str, Any]:
+        if self._engine is None:
+            return {"status": "ok", "engine": "extension-only", "history": []}
         try:
             result: Dict[str, Any] = await self._engine.history()
             result["engine"] = self._engine.name
@@ -1189,6 +1208,8 @@ class GrokEngineManager:
         ]
 
     async def load_session(self, session_id: int) -> Dict[str, Any]:
+        if self._engine is None:
+            return self._no_engine_err()
         db = self._db
         if db is None:
             return {"status": "error", "error": "database not initialized"}
@@ -1258,6 +1279,8 @@ class GrokEngineManager:
         return {"status": "ok" if ok else "error", "deleted": ok}
 
     async def health(self) -> Dict[str, Any]:
+        if self._engine is None:
+            return {"status": "ok", "browser": "disabled", "mode": "extension-only"}
         availability: Dict[str, bool] = {
             "playwright": GrokPlaywrightEngine.available(),
         }
@@ -1272,7 +1295,10 @@ class GrokEngineManager:
         timeout: int = 120,
         tools: Optional[Sequence[str]] = None,
         max_steps: int = 10,
+        attach_files: bool = True,
     ) -> Dict[str, Any]:
+        if self._engine is None:
+            return self._no_engine_err()
         from agent import GrokAgent
 
         if not (prompt or "").strip():
@@ -1290,6 +1316,7 @@ class GrokEngineManager:
                 timeout=timeout,
                 tools=list(tools) if tools else None,
                 max_steps=max_steps,
+                attach_files=attach_files,
             )
             result["engine"] = self._engine.name
             try:
@@ -1308,6 +1335,9 @@ class GrokEngineManager:
         timeout: int = 120,
         files: Optional[Sequence[str]] = None,
     ) -> AsyncGenerator[Dict[str, Any], None]:
+        if self._engine is None:
+            yield {"type": "error", "content": "browser not available (extension-only mode)"}
+            return
         last_event: Optional[Dict[str, Any]] = None
         async for event in self._engine.watch_response(
             prompt=prompt,
@@ -1328,7 +1358,11 @@ class GrokEngineManager:
         timeout: int = 120,
         tools: Optional[Sequence[str]] = None,
         max_steps: int = 10,
+        attach_files: bool = True,
     ) -> AsyncGenerator[Dict[str, Any], None]:
+        if self._engine is None:
+            yield {"type": "error", "content": "browser not available (extension-only mode)"}
+            return
         from agent import GrokAgent
 
         await self._engine.new_conversation(agentic=True)
@@ -1339,6 +1373,7 @@ class GrokEngineManager:
             timeout=timeout,
             tools=list(tools) if tools else None,
             max_steps=max_steps,
+            attach_files=attach_files,
         ):
             last_event = event
             yield event

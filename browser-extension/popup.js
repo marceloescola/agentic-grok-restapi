@@ -7,6 +7,7 @@
   const callCount = document.getElementById("callCount");
   const toolStatus = document.getElementById("toolStatus");
   const logContainer = document.getElementById("logContainer");
+  const attachFilesToggle = document.getElementById("attachFilesToggle");
 
   /* ------------------------------------------------------------------ */
   /*  Get content script bridge reference                                */
@@ -83,6 +84,9 @@
     toggleBtn.textContent = resp.enabled ? "Active" : "Paused";
     toggleBtn.className = resp.enabled ? "active" : "inactive";
     callCount.textContent = `${resp.processedCallsCount} calls`;
+    if (attachFilesToggle) {
+      attachFilesToggle.checked = resp.attachFiles !== false;
+    }
     logCache = resp.debugLog || [];
     renderLog(logCache);
   }
@@ -114,6 +118,13 @@
     const resp = await execOnContent("toggle");
     if (resp) refreshUI();
   });
+
+  if (attachFilesToggle) {
+    attachFilesToggle.addEventListener("change", async () => {
+      const resp = await execOnContent("toggle_files");
+      if (resp) refreshUI();
+    });
+  }
 
   scanBtn.addEventListener("click", async () => {
     await execOnContent("scan");

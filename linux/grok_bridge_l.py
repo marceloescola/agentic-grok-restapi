@@ -52,6 +52,7 @@ class AgentRequest(BaseModel):
     timeout: int = Field(default=120, ge=5, le=900)
     tools: List[str] = Field(default_factory=list)
     max_steps: int = Field(default=10, ge=1, le=20)
+    attach_files: bool = Field(default=True)
 
 
 class NewRequest(BaseModel):
@@ -112,9 +113,28 @@ def create_app(manager: GrokEngineManager) -> FastAPI:
             timeout=req.timeout,
             tools=req.tools or None,
             max_steps=req.max_steps,
+            attach_files=req.attach_files,
         )
         print(
             f"[{ts}] AGT<< [{result.get('status')}] "
+            f"{str(result.get('response', result.get('error', '')))[:80]}",
+            flush=True,
+        )
+        return result
+
+    @app.post("/agent-legacy")
+    async def agent_legacy(req: AgentRequest) -> dict[str, Any]:
+        ts: str = time.strftime("%H:%M:%S")
+        print(f"[{ts}] LEGACY>> {req.prompt[:80]}", flush=True)
+        result: dict[str, Any] = await manager.agent_chat(
+            prompt=req.prompt,
+            timeout=req.timeout,
+            tools=req.tools or None,
+            max_steps=req.max_steps,
+            attach_files=False,
+        )
+        print(
+            f"[{ts}] LEGACY<< [{result.get('status')}] "
             f"{str(result.get('response', result.get('error', '')))[:80]}",
             flush=True,
         )
@@ -311,12 +331,14 @@ def create_app(manager: GrokEngineManager) -> FastAPI:
                     mode: str = data.get("mode", "chat")
                     timeout: int = data.get("timeout", 120)
                     tools: list | None = data.get("tools")
+                    attach_files: bool = data.get("attach_files", True)
 
                     if mode == "agent":
                         async for event in manager.stream_agent(
                             prompt=prompt,
                             timeout=timeout,
                             tools=tools,
+                            attach_files=attach_files,
                         ):
                             await ws.send_json(event)
                     else:
@@ -388,6 +410,11 @@ def main() -> None:
         default=os.getenv("GROK_PROJECT_URL", ""),
         help="Grok project URL for persistent instructions (e.g. https://grok.com/project/UUID).",
     )
+    parser.add_argument(
+        "--extension-only",
+        action="store_true",
+        help="Skip Playwright browser startup (for use with browser extension only).",
+    )
     args = parser.parse_args()
 
     cfg: EngineConfig = EngineConfig(
@@ -402,16 +429,21 @@ def main() -> None:
     db: SessionDB = SessionDB()
     db.init_db()
     manager: GrokEngineManager = GrokEngineManager(
-        cfg=cfg, tool_server_url=args.tool_server_url
+        cfg=cfg, tool_server_url=args.tool_server_url, extension_only=bool(args.extension_only)
     )
     manager.set_db(db)
     app: FastAPI = create_app(manager)
 
-    print(f"Grok Bridge Linux {ENGINE_VERSION} {args.host}:{args.port}", flush=True)
+    if args.extension_only:
+        print(f"Grok Bridge (extension-only mode) {args.host}:{args.port}", flush=True)
+    else:
+        print(f"Grok Bridge Linux {ENGINE_VERSION} {args.host}:{args.port}", flush=True)
     print(
-        "Endpoints: POST /chat, POST /agent, POST /new, GET /health, GET /history,"
-        " GET /sessions, POST /sessions/load, DELETE /sessions/{id},"
-        " GET /debug/scrape, GET /debug/inspect-dom, GET /debug/input, GET /debug/buttons, WS /ws",
+        "Endpoints: POST /chat, POST /agent, POST /agent-legacy (deprecated),"
+        " POST /new, GET /health, GET /history, GET /sessions,"
+        " POST /sessions/load, DELETE /sessions/{id},"
+        " GET /debug/scrape, GET /debug/inspect-dom, GET /debug/input,"
+        " GET /debug/buttons, WS /ws",
         flush=True,
     )
     print(

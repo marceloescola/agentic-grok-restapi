@@ -38,11 +38,13 @@ class GrokClient:
         timeout: int = 120,
         tools: Optional[List[str]] = None,
         max_steps: int = 10,
+        attach_files: bool = True,
     ) -> dict[str, Any]:
         body: dict[str, Any] = {
             "prompt": prompt,
             "timeout": timeout,
             "max_steps": max_steps,
+            "attach_files": attach_files,
         }
         if tools:
             body["tools"] = tools
@@ -101,6 +103,7 @@ class GrokWSClient:
         mode: str = "chat",
         files: Optional[List[str]] = None,
         tools: Optional[List[str]] = None,
+        attach_files: bool = True,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         msg: Dict[str, Any] = {
             "type": "prompt",
@@ -111,6 +114,8 @@ class GrokWSClient:
             msg["files"] = files
         if tools:
             msg["tools"] = tools
+        if mode == "agent":
+            msg["attach_files"] = attach_files
         try:
             async with connect(self._ws_url) as ws:
                 await ws.send(json.dumps(msg))

@@ -40,8 +40,14 @@
   /* ------------------------------------------------------------------ */
   let processedCalls = new Set();
   let enabled = true;
+  let attachFiles = true;
   let debugLog = [];
   const MAX_LOG = 200;
+
+  // Load settings from storage
+  browser.storage.local.get("attachFiles").then((r) => {
+    if (r.attachFiles !== undefined) attachFiles = r.attachFiles;
+  });
 
   /* ------------------------------------------------------------------ */
   /*  Debug helpers                                                      */
@@ -51,6 +57,13 @@
     debugLog.push(entry);
     if (debugLog.length > MAX_LOG) debugLog.shift();
     console.log("[GrokToolBridge]", msg, data || "");
+  }
+
+  /* ------------------------------------------------------------------ */
+  /*  Helpers                                                            */
+  /* ------------------------------------------------------------------ */
+  function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   /* ------------------------------------------------------------------ */
@@ -144,20 +157,65 @@
       });
       if (resp && resp.error) {
         debug("Tool error", resp.error);
-        return `Tool error (${toolCall.name}): ${resp.error}`;
+        return { toolName: toolCall.name, result: `Tool error: ${resp.error}` };
       }
       const result = resp && resp.result !== undefined ? resp.result : "(no result)";
-      debug("Tool result", result);
-      return `Here's the tool result (${toolCall.name}): ${result}`;
+      debug("Tool result", `${result.substring(0, 200)}... (${result.length} chars)`);
+      return { toolName: toolCall.name, result };
     } catch (err) {
       debug("Tool execution failed", err.message);
-      return `Tool call failed (${toolCall.name}): ${err.message}`;
+      return { toolName: toolCall.name, result: `Tool call failed: ${err.message}` };
     }
   }
 
   /* ------------------------------------------------------------------ */
   /*  Inject result into chat input                                      */
   /* ------------------------------------------------------------------ */
+
+  /** Upload result as a file via hidden input[type=file], then send short message. */
+  async function sendResultAsFile(toolName, result) {
+    const file = new File([result], `tool_result_${toolName}.txt`, { type: "text/plain" });
+
+    // Find or reveal the file input
+    let fileInput = document.querySelector('input[type="file"]');
+    if (!fileInput) {
+      // Click attach button to make the input appear
+      for (const sel of ['button[aria-label*="Attach"]', 'button[aria-label*="Upload"]', '[data-testid*="attach"] button']) {
+        const btn = document.querySelector(sel);
+        if (btn) { btn.click(); await sleep(300); break; }
+      }
+      fileInput = document.querySelector('input[type="file"]');
+    }
+
+    if (!fileInput) {
+      debug("No file input found on page");
+      return false;
+    }
+
+    // Set files via DataTransfer (standard browser API — works in content scripts)
+    const dt = new DataTransfer();
+    dt.items.add(file);
+    fileInput.files = dt.files;
+    fileInput.dispatchEvent(new Event("change", { bubbles: true }));
+    fileInput.dispatchEvent(new Event("input", { bubbles: true }));
+
+    // Wait for grok's UI to register the file
+    await sleep(600);
+
+    injectText(`Tool result (${toolName}) — see attached file`);
+    return true;
+  }
+
+  /** Decide whether to attach as file or inject as text, then send. */
+  async function injectResult(toolName, result, useFiles) {
+    if (useFiles) {
+      const sent = await sendResultAsFile(toolName, result);
+      if (sent) return;
+    }
+    // Fallback: text injection (current behavior)
+    const msg = `Here's the tool result (${toolName}): ${result}`;
+    injectText(msg);
+  }
   function findInput() {
     for (const sel of INPUT_SELECTORS) {
       const el = document.querySelector(sel);
@@ -239,9 +297,9 @@
       for (const text of texts) {
         const calls = findToolCalls(text);
         for (const call of calls) {
-          const resultMsg = await executeToolCall(call);
-          debug("Injecting result", resultMsg);
-          injectText(resultMsg);
+          const { toolName, result } = await executeToolCall(call);
+          debug("Injecting result", `${result.substring(0, 120)}...`);
+          await injectResult(toolName, result, attachFiles);
         }
       }
     } finally {
@@ -280,6 +338,14 @@
       enabled = v;
       debug(v ? "Enabled" : "Disabled");
     },
+    get attachFiles() {
+      return attachFiles;
+    },
+    set attachFiles(v) {
+      attachFiles = !!v;
+      browser.storage.local.set({ attachFiles });
+      debug(attachFiles ? "File attachment ON" : "File attachment OFF");
+    },
     get debugLog() {
       return debugLog;
     },
@@ -306,6 +372,7 @@
       case "get_state":
         sendResponse({
           enabled: bridge.enabled,
+          attachFiles: bridge.attachFiles,
           processedCallsCount: bridge.processedCallsCount,
           debugLog: bridge.debugLog.slice(-50),
         });
@@ -313,6 +380,10 @@
       case "toggle":
         bridge.enabled = !bridge.enabled;
         sendResponse({ enabled: bridge.enabled });
+        break;
+      case "toggle_files":
+        bridge.attachFiles = !bridge.attachFiles;
+        sendResponse({ attachFiles: bridge.attachFiles });
         break;
       case "reset":
         bridge.resetProcessed();

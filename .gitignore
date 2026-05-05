@@ -3,3 +3,6 @@
 !.pixi/config.toml
 
 .venv
+__pycache__/
+*.pyc
+.DS_Store

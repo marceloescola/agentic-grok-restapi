@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import tempfile
 from typing import Any, AsyncGenerator, Dict, List, Optional, Sequence
 
 # Allow importing the tools package from the project root (parent of linux/)
@@ -67,6 +68,13 @@ def build_tool_result_message(tool_name: str, result: str) -> str:
     return f"Here's the tool result ({tool_name}): {result}"
 
 
+def _prepare_attachment(tool_name: str, result: str) -> tuple[str, list[str]]:
+    fd, path = tempfile.mkstemp(suffix=f"_{tool_name}.txt", prefix="grok_tool_")
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(result)
+    return f"Tool result ({tool_name}) \u2014 see attached file", [path]
+
+
 class GrokAgent:
     def __init__(self, engine: Any, tool_server_url: str = "http://localhost:19997") -> None:
         self._engine: Any = engine
@@ -99,6 +107,7 @@ class GrokAgent:
         timeout: int = 120,
         tools: Optional[Sequence[str]] = None,
         max_steps: int = 10,
+        attach_files: bool = True,
     ) -> Dict[str, Any]:
         tool_defs: List[Any] = get_tool_defs(list(tools) if tools else None)
 
@@ -157,11 +166,27 @@ class GrokAgent:
                 "result": tool_result,
             })
 
-            result = await self._engine.send_and_wait(
-                prompt=build_tool_result_message(tool_name, tool_result),
-                timeout=timeout,
-                reuse_page=True,
-            )
+            if attach_files:
+                tool_msg, tool_files = _prepare_attachment(tool_name, tool_result)
+                try:
+                    result = await self._engine.send_and_wait(
+                        prompt=tool_msg,
+                        timeout=timeout,
+                        reuse_page=True,
+                        files=tool_files,
+                    )
+                finally:
+                    for fp in tool_files:
+                        try:
+                            os.unlink(fp)
+                        except OSError:
+                            pass
+            else:
+                result = await self._engine.send_and_wait(
+                    prompt=build_tool_result_message(tool_name, tool_result),
+                    timeout=timeout,
+                    reuse_page=True,
+                )
 
         result["step_count"] = max_steps
         result["steps"] = steps
@@ -174,6 +199,7 @@ class GrokAgent:
         timeout: int = 120,
         tools: Optional[Sequence[str]] = None,
         max_steps: int = 10,
+        attach_files: bool = True,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         tool_defs: List[Any] = get_tool_defs(list(tools) if tools else None)
 
@@ -246,15 +272,35 @@ class GrokAgent:
                 "result": tool_result,
             })
 
-            async for event in self._engine.watch_response(
-                prompt=build_tool_result_message(tool_name, tool_result),
-                timeout=timeout,
-                reuse_page=True,
-            ):
-                if event["type"] in ("done", "timeout", "error"):
-                    response_text = event.get("content", "")
-                    break
-                yield event
+            if attach_files:
+                tool_msg, tool_files = _prepare_attachment(tool_name, tool_result)
+                try:
+                    async for event in self._engine.watch_response(
+                        prompt=tool_msg,
+                        timeout=timeout,
+                        reuse_page=True,
+                        files=tool_files,
+                    ):
+                        if event["type"] in ("done", "timeout", "error"):
+                            response_text = event.get("content", "")
+                            break
+                        yield event
+                finally:
+                    for fp in tool_files:
+                        try:
+                            os.unlink(fp)
+                        except OSError:
+                            pass
+            else:
+                async for event in self._engine.watch_response(
+                    prompt=build_tool_result_message(tool_name, tool_result),
+                    timeout=timeout,
+                    reuse_page=True,
+                ):
+                    if event["type"] in ("done", "timeout", "error"):
+                        response_text = event.get("content", "")
+                        break
+                    yield event
 
         yield {"type": "message", "content": response_text}
         yield {"type": "status", "state": "max_steps", "steps": steps}

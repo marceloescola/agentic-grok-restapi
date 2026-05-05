@@ -83,6 +83,8 @@ Event types: `partial` (streaming text), `done` (final), `tool_call`, `tool_resu
 
 A full terminal user interface with chat, agent mode, settings, and file picker:
 
+![TUI Screenshot](assets/print.png)
+
 ```bash
 uv run -m tui
 ```
